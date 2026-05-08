@@ -1,5 +1,6 @@
 import type { Request, Response } from "express";
 import {
+  DEFAULT_WEBHOOK_MAX_BODY_BYTES,
   isDangerousNameMatchingEnabled,
   keepHttpServerTaskAlive,
   mergeAllowlist,
@@ -209,7 +210,12 @@ export async function monitorMSTeamsProvider(
       }
     }
   } catch (err) {
-    runtime.log?.(`msteams resolve failed; using config entries. ${formatUnknownError(err)}`);
+    // Allowlist Graph resolution is security-sensitive — surface failures at
+    // error level so operators notice the degraded state where Graph-resolved
+    // IDs are missing (#77674).
+    runtime.error?.(
+      `msteams resolve failed; falling back to raw config entries — allowlist members resolved via Graph may be missing. ${formatUnknownError(err)}`,
+    );
   }
 
   msteamsCfg = {
@@ -246,6 +252,15 @@ export async function monitorMSTeamsProvider(
   // so the App registers its route handler on it (including JWT validation).
   const expressApp = express.default();
 
+  // Cap inbound webhook bodies before any handler parses them. The SDK's
+  // ExpressAdapter installs `express.json()` (no limit) inside its registered
+  // route, so an unbounded payload from a Bearer-shaped attacker would force
+  // JSON parsing before JWT validation. Installing our own
+  // `express.json({ limit })` first makes Express memoize the parsed body on
+  // the request — the SDK's later `json()` is then a no-op, and our limit
+  // applies before either the bearer gate or the SDK's authorize step run.
+  expressApp.use(express.json({ limit: DEFAULT_WEBHOOK_MAX_BODY_BYTES }));
+
   // Cheap pre-parse auth gate: reject requests without a Bearer token before
   // spending CPU/memory on JSON body parsing. This prevents unauthenticated
   // request floods from forcing body parsing on internet-exposed webhooks.
@@ -267,6 +282,34 @@ export async function monitorMSTeamsProvider(
     httpServerAdapter: await createMSTeamsExpressAdapter(expressApp),
     messagingEndpoint: configuredPath,
   });
+
+  // Existing Azure Bot registrations may still point at the legacy
+  // `/api/messages` endpoint while an operator has configured a custom
+  // `webhook.path`. Forward to the configured path with a one-time deprecation
+  // warning so those registrations keep working through the transition. The
+  // forwarder runs after the SDK route is registered, so it only matches
+  // requests that the SDK route itself didn't claim.
+  if (configuredPath !== "/api/messages") {
+    let warnedLegacyMessagesRoute = false;
+    expressApp.post(
+      "/api/messages",
+      (req: Request, res: Response, next: (err?: unknown) => void) => {
+        if (!warnedLegacyMessagesRoute) {
+          warnedLegacyMessagesRoute = true;
+          log.warn?.(
+            `received request on /api/messages but webhook.path is ${configuredPath}; ` +
+              "update your Azure Bot endpoint — this fallback will be removed in a future release",
+          );
+        }
+        // Rewrite the URL so the SDK's registered handler picks it up. Express
+        // app instances are themselves request handlers (Application extends
+        // IRouter extends RequestHandler), so re-invoking the app re-runs the
+        // middleware chain (including the SDK-registered route).
+        req.url = configuredPath;
+        expressApp(req, res, next);
+      },
+    );
+  }
 
   // Build a token provider adapter for Graph API operations
   const tokenProvider = createMSTeamsTokenProvider(app);

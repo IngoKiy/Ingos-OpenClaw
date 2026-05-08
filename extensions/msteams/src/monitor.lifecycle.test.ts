@@ -291,10 +291,13 @@ describe("monitorMSTeamsProvider lifecycle", () => {
 
     const app = expressControl.apps.at(-1);
     expect(app).toBeDefined();
-    // Bearer-presence middleware is the first middleware registered
-    expect(app!.use).toHaveBeenCalled();
+    // Two middlewares are installed before the SDK route registers:
+    // [0] = `express.json({ limit })` — caps inbound bodies before any handler
+    //       parses them (forces the SDK's later json() to be a no-op).
+    // [1] = bearer-presence gate — rejects unauthenticated requests cheaply.
+    expect(app!.use.mock.calls.length).toBeGreaterThanOrEqual(2);
 
-    const bearerMiddleware = app!.use.mock.calls[0]?.[0] as (
+    const bearerMiddleware = app!.use.mock.calls[1]?.[0] as (
       req: Request,
       res: Response,
       next: (err?: unknown) => void,

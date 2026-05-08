@@ -19,7 +19,7 @@ minimumReleaseAgeExclude:
   - "@cloudflare/workers-types"
   - "@hono/node-server"
   - "@mariozechner/*"
-  - "@microsoft/teams.*"
+  - "@microsoft/teams.apps"
   - "@openai/codex"
   - "@openai/codex-*"
   - "@typescript/native-preview*"

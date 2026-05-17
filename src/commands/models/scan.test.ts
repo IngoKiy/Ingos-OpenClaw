@@ -148,4 +148,17 @@ describe("models scan command", () => {
 
     expect(mocks.scanOpenRouterModels).not.toHaveBeenCalled();
   });
+
+  it("rejects fractional count options before scanning", async () => {
+    const runtime = createRuntime();
+
+    await expect(modelsScanCommand({ maxCandidates: "1.5" }, runtime)).rejects.toThrow(
+      "--max-candidates must be a positive integer",
+    );
+    await expect(modelsScanCommand({ concurrency: "2.5" }, runtime)).rejects.toThrow(
+      "--concurrency must be a positive integer",
+    );
+
+    expect(mocks.scanOpenRouterModels).not.toHaveBeenCalled();
+  });
 });

@@ -337,6 +337,46 @@ describe("maybeAutoMigrateLegacyOAuthSidecarOnInteractiveCli", () => {
     expect(fs.existsSync(declineMarkerPath(state))).toBe(false);
   });
 
+  it.each([
+    {
+      name: "plugins uninstall --force",
+      argv: ["node", "openclaw", "plugins", "uninstall", "pkg", "--force"],
+    },
+    { name: "agent prune --force", argv: ["node", "openclaw", "agent", "prune", "old", "--force"] },
+    { name: "models scan --no-input", argv: ["node", "openclaw", "models", "scan", "--no-input"] },
+  ])("does not prompt for additional no-prompt flags: $name", async ({ argv }) => {
+    const { state, sidecarPath } = await makeStateWithLegacyOauthRef("seed");
+    const confirm = vi.fn();
+    await maybeAutoMigrateLegacyOAuthSidecarOnInteractiveCli({
+      argv,
+      env: state.env,
+      isInteractiveTty: () => true,
+      prompter: { confirm },
+    });
+    expect(confirm).not.toHaveBeenCalled();
+    expect(fs.existsSync(sidecarPath)).toBe(true);
+    expect(fs.existsSync(declineMarkerPath(state))).toBe(false);
+  });
+
+  it("still prompts when --force or --no-input appears after a `--` argv terminator", async () => {
+    const { state } = await makeStateWithLegacyOauthRef("seed");
+    for (const argv of [
+      ["node", "openclaw", "status", "--", "--force"],
+      ["node", "openclaw", "status", "--", "--no-input"],
+    ]) {
+      const confirm = vi.fn(async () => false);
+      await maybeAutoMigrateLegacyOAuthSidecarOnInteractiveCli({
+        argv,
+        env: state.env,
+        isInteractiveTty: () => true,
+        prompter: { confirm },
+      });
+      expect(confirm).toHaveBeenCalledTimes(1);
+      // Reset the decline marker so the next iteration also prompts.
+      fs.rmSync(declineMarkerPath(state), { force: true });
+    }
+  });
+
   it("still prompts when --yes appears after a `--` argv terminator", async () => {
     const { state } = await makeStateWithLegacyOauthRef("seed");
     const confirm = vi.fn(async () => false);

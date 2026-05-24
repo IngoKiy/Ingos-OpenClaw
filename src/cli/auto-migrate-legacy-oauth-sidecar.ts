@@ -9,6 +9,12 @@ const DECLINE_MARKER_FILENAME = "legacy-oauth-sidecar-migration-declined";
 
 const SKIPPED_PRIMARIES = new Set(["doctor", "update", "help", "completion", "version"]);
 
+// Argv flags that some command documents as suppressing confirmation
+// prompts. Treat any of them as a signal that this invocation is
+// scripted/automation and must not see the migration prompt either.
+// `hasFlag` honors the `--` argv terminator for all of these.
+const NO_PROMPT_FLAGS = ["--non-interactive", "--yes", "--no-input", "--force"] as const;
+
 type AutoMigrateInteractivePrompter = {
   confirm: (params: { message: string; initialValue?: boolean }) => Promise<boolean | symbol>;
 };
@@ -56,12 +62,13 @@ function shouldSkip(params: {
   if (invocation.primary && SKIPPED_PRIMARIES.has(invocation.primary)) {
     return true;
   }
-  if (
-    hasJsonOutputFlag(params.argv) ||
-    hasFlag(params.argv, "--non-interactive") ||
-    hasFlag(params.argv, "--yes")
-  ) {
+  if (hasJsonOutputFlag(params.argv)) {
     return true;
+  }
+  for (const flag of NO_PROMPT_FLAGS) {
+    if (hasFlag(params.argv, flag)) {
+      return true;
+    }
   }
   if (!hasSidecarFiles(env)) {
     return true;

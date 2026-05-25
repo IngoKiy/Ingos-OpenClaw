@@ -163,8 +163,10 @@ describeLive("xai live", () => {
         ? (payload.tools as Array<Record<string, unknown>>)
         : [];
       expect(payloadTools.length).toBeGreaterThan(0);
-      const firstFunction = payloadTools[0] ? getToolFunction(payloadTools[0]) : undefined;
-      requireLiveValue(firstFunction, "first xAI tool function");
+      const firstFunction = requireLiveValue(
+        payloadTools[0] ? getToolFunction(payloadTools[0]) : undefined,
+        "first xAI tool function",
+      );
       expect(typeof firstFunction).toBe("object");
       expect(Array.isArray(firstFunction)).toBe(false);
       expect([undefined, false]).toContain(firstFunction.strict);

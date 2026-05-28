@@ -191,6 +191,7 @@ set +e
 openclaw agent --local \
   --agent main \
   --session-id npm-onboard-channel-agent \
+  --model openai/gpt-5.5 \
   --message "Return the success marker from the test server." \
   --thinking off \
   --json >/tmp/openclaw-agent.combined 2>&1

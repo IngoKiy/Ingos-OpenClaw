@@ -54,6 +54,8 @@ jobs:
       run_bun_global_install_smoke: ${{ steps.manifest.outputs.run_bun_global_install_smoke }}
       target_sha: ${{ steps.manifest.outputs.target_sha }}
       dockerfile_image: ${{ steps.manifest.outputs.dockerfile_image }}
+      installer_smoke_image: ${{ steps.manifest.outputs.installer_smoke_image }}
+      installer_nonroot_image: ${{ steps.manifest.outputs.installer_nonroot_image }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -80,6 +82,8 @@ jobs:
           target_sha="$(git rev-parse HEAD)"
           owner="$(printf '%s' "${GITHUB_REPOSITORY_OWNER:-openclaw}" | tr '[:upper:]' '[:lower:]')"
           dockerfile_image="ghcr.io/${owner}/openclaw-dockerfile-smoke:${target_sha}"
+          installer_smoke_image="ghcr.io/${owner}/openclaw-install-smoke:${target_sha}"
+          installer_nonroot_image="ghcr.io/${owner}/openclaw-install-nonroot:${target_sha}"
           if [ "$event_name" = "schedule" ]; then
             run_bun_global_install_smoke=true
           elif [ "$event_name" = "workflow_dispatch" ] || [ "$event_name" = "workflow_call" ]; then
@@ -95,6 +99,8 @@ jobs:
             echo "run_bun_global_install_smoke=$run_bun_global_install_smoke"
             echo "target_sha=$target_sha"
             echo "dockerfile_image=$dockerfile_image"
+            echo "installer_smoke_image=$installer_smoke_image"
+            echo "installer_nonroot_image=$installer_nonroot_image"
           } >> "$GITHUB_OUTPUT"
 
   install-smoke-fast:
@@ -428,28 +434,85 @@ jobs:
           IMAGE_REF: ${{ needs.root_dockerfile_image.outputs.image_ref }}
         run: timeout --kill-after=30s 600s docker pull "$IMAGE_REF"
 
+      - name: Check existing installer smoke images
+        id: installer_images
+        env:
+          SMOKE_IMAGE: ${{ needs.preflight.outputs.installer_smoke_image }}
+          NONROOT_IMAGE: ${{ needs.preflight.outputs.installer_nonroot_image }}
+        run: |
+          set -euo pipefail
+          smoke_exists=false
+          nonroot_exists=false
+          needs_build=false
+
+          if timeout --kill-after=30s 180s docker manifest inspect "$SMOKE_IMAGE" >/dev/null 2>&1; then
+            smoke_exists=true
+            echo "Using existing installer smoke image: $SMOKE_IMAGE"
+          else
+            needs_build=true
+            echo "No existing installer smoke image found for $SMOKE_IMAGE; rebuilding it."
+          fi
+
+          if timeout --kill-after=30s 180s docker manifest inspect "$NONROOT_IMAGE" >/dev/null 2>&1; then
+            nonroot_exists=true
+            echo "Using existing installer non-root image: $NONROOT_IMAGE"
+          else
+            needs_build=true
+            echo "No existing installer non-root image found for $NONROOT_IMAGE; rebuilding it."
+          fi
+
+          {
+            echo "smoke_exists=$smoke_exists"
+            echo "nonroot_exists=$nonroot_exists"
+            echo "needs_build=$needs_build"
+          } >> "$GITHUB_OUTPUT"
+          {
+            echo "## Installer smoke images"
+            echo
+            echo "- Smoke image: \`$SMOKE_IMAGE\`"
+            echo "- Non-root image: \`$NONROOT_IMAGE\`"
+            echo "- Reused smoke image: \`$smoke_exists\`"
+            echo "- Reused non-root image: \`$nonroot_exists\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Set up Blacksmith Docker Builder
+        if: steps.installer_images.outputs.needs_build == 'true'
         uses: useblacksmith/setup-docker-builder@722e97d12b1d06a961800dd6c05d79d951ad3c80 # v1
         with:
           max-cache-size-mb: 800000
 
-      - name: Build installer smoke image
+      - name: Build and push installer smoke image
+        if: steps.installer_images.outputs.smoke_exists != 'true'
+        env:
+          IMAGE_REF: ${{ needs.preflight.outputs.installer_smoke_image }}
         run: |
           timeout --kill-after=30s 20m docker buildx build \
             --progress=plain \
-            --load \
-            -t openclaw-install-smoke:local \
+            --push \
+            -t "$IMAGE_REF" \
             -f ./scripts/docker/install-sh-smoke/Dockerfile \
             ./scripts/docker
 
-      - name: Build installer non-root image
+      - name: Build and push installer non-root image
+        if: steps.installer_images.outputs.nonroot_exists != 'true'
+        env:
+          IMAGE_REF: ${{ needs.preflight.outputs.installer_nonroot_image }}
         run: |
           timeout --kill-after=30s 20m docker buildx build \
             --progress=plain \
-            --load \
-            -t openclaw-install-nonroot:local \
+            --push \
+            -t "$IMAGE_REF" \
             -f ./scripts/docker/install-sh-nonroot/Dockerfile \
             ./scripts/docker
+
+      - name: Pull installer smoke images
+        env:
+          SMOKE_IMAGE: ${{ needs.preflight.outputs.installer_smoke_image }}
+          NONROOT_IMAGE: ${{ needs.preflight.outputs.installer_nonroot_image }}
+        run: |
+          set -euo pipefail
+          timeout --kill-after=30s 600s docker pull "$SMOKE_IMAGE"
+          timeout --kill-after=30s 600s docker pull "$NONROOT_IMAGE"
 
       - name: Setup Node environment for installer smoke
         uses: ./.github/actions/setup-node-env
@@ -462,6 +525,8 @@ jobs:
           OPENCLAW_INSTALL_URL: file:///tmp/openclaw-install.sh
           OPENCLAW_INSTALL_CLI_URL: file:///tmp/openclaw-install-cli.sh
           OPENCLAW_NO_ONBOARD: "1"
+          OPENCLAW_INSTALL_SMOKE_IMAGE: ${{ needs.preflight.outputs.installer_smoke_image }}
+          OPENCLAW_INSTALL_NONROOT_IMAGE: ${{ needs.preflight.outputs.installer_nonroot_image }}
           OPENCLAW_INSTALL_SMOKE_SKIP_CLI: "0"
           OPENCLAW_INSTALL_SMOKE_SKIP_IMAGE_BUILD: "1"
           OPENCLAW_INSTALL_NONROOT_SKIP_IMAGE_BUILD: "1"

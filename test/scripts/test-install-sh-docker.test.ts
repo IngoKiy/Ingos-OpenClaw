@@ -461,10 +461,28 @@ describe("bun global install smoke", () => {
     expect(workflow).toContain("run_fast_install_smoke=true");
     expect(workflow).toContain("run_full_install_smoke=true");
     expect(workflow).toContain("run_install_smoke=true");
+    expect(workflow).toContain(
+      'installer_smoke_image="ghcr.io/${owner}/openclaw-install-smoke:${target_sha}"',
+    );
+    expect(workflow).toContain(
+      'installer_nonroot_image="ghcr.io/${owner}/openclaw-install-nonroot:${target_sha}"',
+    );
     expect(workflow).toContain("install-smoke-fast:");
     expect(workflow).toContain("run_fast_install_smoke");
     expect(workflow).toContain("run_full_install_smoke");
     expect(workflow).toContain("timeout --kill-after=30s 45m docker buildx build");
+    expect(workflow).toContain("Check existing installer smoke images");
+    expect(workflow).toContain(
+      'timeout --kill-after=30s 180s docker manifest inspect "$SMOKE_IMAGE"',
+    );
+    expect(workflow).toContain(
+      'timeout --kill-after=30s 180s docker manifest inspect "$NONROOT_IMAGE"',
+    );
+    expect(workflow).toContain("Build and push installer smoke image");
+    expect(workflow).toContain("Build and push installer non-root image");
+    expect(workflow).toContain("--push");
+    expect(workflow).toContain('timeout --kill-after=30s 600s docker pull "$SMOKE_IMAGE"');
+    expect(workflow).toContain('timeout --kill-after=30s 600s docker pull "$NONROOT_IMAGE"');
     expect(workflow).toContain('timeout --kill-after=30s 600s docker pull "$IMAGE_REF"');
     expect(workflow).not.toContain('timeout 300s docker pull "$IMAGE_REF"');
     expect(workflow.match(/timeout --kill-after=30s 20m docker run --rm/g)?.length).toBe(6);
@@ -473,6 +491,12 @@ describe("bun global install smoke", () => {
     expect(workflow).toContain("--load");
     expect(workflow).toContain("OPENCLAW_INSTALL_URL: file:///tmp/openclaw-install.sh");
     expect(workflow).toContain("OPENCLAW_INSTALL_CLI_URL: file:///tmp/openclaw-install-cli.sh");
+    expect(workflow).toContain(
+      "OPENCLAW_INSTALL_SMOKE_IMAGE: ${{ needs.preflight.outputs.installer_smoke_image }}",
+    );
+    expect(workflow).toContain(
+      "OPENCLAW_INSTALL_NONROOT_IMAGE: ${{ needs.preflight.outputs.installer_nonroot_image }}",
+    );
     expect(workflow).toContain('OPENCLAW_INSTALL_SMOKE_SKIP_CLI: "0"');
     expect(workflow).toContain("Run Rocky Linux installer smoke");
     expect(workflow).toContain("Run Rocky Linux CLI installer smoke");

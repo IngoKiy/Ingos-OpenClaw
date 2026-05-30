@@ -50,6 +50,30 @@ describe("exec approvals protocol validators", () => {
     ).toBe(true);
   });
 
+  it("rejects empty host-native node approval policy payloads", () => {
+    expect(
+      validateExecApprovalsNodeSetParams({
+        nodeId: "node-1",
+        native: {},
+        baseHash: "native-hash-1",
+      }),
+    ).toBe(false);
+    expect(
+      validateExecApprovalsNodeSetParams({
+        nodeId: "node-1",
+        native: { enabled: true },
+        baseHash: "native-hash-1",
+      }),
+    ).toBe(false);
+    expect(
+      validateExecApprovalsNodeSetParams({
+        nodeId: "node-1",
+        native: { rules: [] },
+        baseHash: "native-hash-1",
+      }),
+    ).toBe(false);
+  });
+
   it("rejects unknown allowlist metadata", () => {
     expect(
       validateExecApprovalsSetParams({

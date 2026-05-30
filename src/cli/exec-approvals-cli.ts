@@ -173,13 +173,14 @@ function normalizeNativeExecApprovalPolicyInput(value: unknown): NativeExecAppro
         return nextRule;
       })
     : undefined;
-  if (!defaultAction && !rules) {
+  const nonEmptyRules = rules && rules.length > 0 ? rules : undefined;
+  if (!defaultAction && !nonEmptyRules) {
     exitWithError("Host-native exec approvals JSON must include defaultAction or rules.");
   }
   return {
     ...(typeof record.enabled === "boolean" ? { enabled: record.enabled } : {}),
     ...(defaultAction ? { defaultAction } : {}),
-    ...(rules ? { rules } : {}),
+    ...(nonEmptyRules ? { rules: nonEmptyRules } : {}),
   };
 }
 

@@ -90,14 +90,24 @@ export const NativeExecApprovalRuleSchema = Type.Object(
   { additionalProperties: false },
 );
 
-export const NativeExecApprovalPolicySchema = Type.Object(
-  {
-    enabled: Type.Optional(Type.Boolean()),
-    defaultAction: Type.Optional(Type.String()),
-    rules: Type.Optional(Type.Array(NativeExecApprovalRuleSchema)),
-  },
-  { additionalProperties: false },
-);
+export const NativeExecApprovalPolicySchema = Type.Union([
+  Type.Object(
+    {
+      enabled: Type.Optional(Type.Boolean()),
+      defaultAction: NonEmptyString,
+      rules: Type.Optional(Type.Array(NativeExecApprovalRuleSchema)),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      enabled: Type.Optional(Type.Boolean()),
+      defaultAction: Type.Optional(NonEmptyString),
+      rules: Type.Array(NativeExecApprovalRuleSchema, { minItems: 1 }),
+    },
+    { additionalProperties: false },
+  ),
+]);
 
 export const ExecApprovalsNodeSetParamsSchema = Type.Union([
   Type.Object(

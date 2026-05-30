@@ -2179,9 +2179,12 @@ describe("dispatchTelegramMessage draft streaming", () => {
     });
 
     expect(answerDraftStream.clear).toHaveBeenCalled();
-    expect(answerDraftStream.clear.mock.invocationCallOrder[0]).toBeLessThan(
-      answerDraftStream.update.mock.invocationCallOrder.at(-1)!,
-    );
+    expect(answerDraftStream.forceNewMessage).toHaveBeenCalled();
+    const clearOrder = answerDraftStream.clear.mock.invocationCallOrder[0];
+    const forceNewMessageOrder = answerDraftStream.forceNewMessage.mock.invocationCallOrder[0];
+    const lastUpdateOrder = answerDraftStream.update.mock.invocationCallOrder.at(-1)!;
+    expect(clearOrder).toBeLessThan(forceNewMessageOrder);
+    expect(forceNewMessageOrder).toBeLessThan(lastUpdateOrder);
     expect(answerDraftStream.update).toHaveBeenLastCalledWith("`🛠️ Exec`");
   });
 

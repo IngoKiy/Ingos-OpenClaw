@@ -1005,6 +1005,7 @@ export const dispatchTelegramMessage = async ({
     answerLane.finalized = false;
     resetAnswerToolProgressDraft();
     await answerLane.stream?.clear();
+    answerLane.stream?.forceNewMessage();
     return true;
   };
   const pushStreamToolProgress = async (

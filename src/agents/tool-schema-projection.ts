@@ -24,6 +24,11 @@ export type RuntimeToolSchemaInspection<TTool extends Pick<AnyAgentTool, "name" 
   readonly diagnostics: readonly RuntimeToolSchemaDiagnostic[];
 };
 
+type SerializedToolInputSchema = {
+  readonly schema: RuntimeToolInputSchemaJson;
+  readonly violations: readonly string[];
+};
+
 type RuntimeToolEntryRead<TTool extends Pick<AnyAgentTool, "name" | "parameters">> =
   | {
       readonly ok: true;
@@ -108,7 +113,7 @@ function isJsonObject(value: RuntimeToolInputSchemaJson): value is {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-function serializeToolInputSchema(value: unknown, path: string): RuntimeToolInputSchemaProjection {
+function serializeToolInputSchema(value: unknown, path: string): SerializedToolInputSchema {
   let text: string | undefined;
   try {
     text = JSON.stringify(value);
@@ -132,7 +137,7 @@ function serializeToolInputSchema(value: unknown, path: string): RuntimeToolInpu
     };
   }
   return {
-    schema: normalizeProviderToolInputSchema(parsed),
+    schema: parsed,
     violations: [],
   };
 }
@@ -261,16 +266,16 @@ export function projectRuntimeToolInputSchema(
   schema: unknown,
   path = "parameters",
 ): RuntimeToolInputSchemaProjection {
-  const projection = serializeToolInputSchema(schema, path);
-  const violations = [...projection.violations];
-  if (!isJsonObject(projection.schema)) {
+  const serialized = serializeToolInputSchema(schema, path);
+  const violations = [...serialized.violations];
+  if (!isJsonObject(serialized.schema)) {
     violations.push(`${path} must be a JSON object schema`);
-  } else if (projection.schema.type !== undefined && projection.schema.type !== "object") {
+  } else if (serialized.schema.type !== undefined && serialized.schema.type !== "object") {
     violations.push(`${path}.type must be "object"`);
   }
-  violations.push(...findDynamicSchemaKeywordViolations(projection.schema, path));
+  violations.push(...findDynamicSchemaKeywordViolations(serialized.schema, path));
   return {
-    schema: projection.schema,
+    schema: normalizeProviderToolInputSchema(serialized.schema),
     violations,
   };
 }

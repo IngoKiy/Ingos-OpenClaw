@@ -145,6 +145,35 @@ describe("runtime tool input schema projection", () => {
     });
   });
 
+  it("reports dynamic JSON Schema keywords before provider projection", () => {
+    const hiddenByProjection = {
+      name: "fuzzplugin_dynamic_ref_union",
+      parameters: {
+        type: "object",
+        anyOf: [{ $dynamicRef: "#target" }, { type: "string" }],
+        properties: {},
+      },
+    };
+
+    expect(projectRuntimeToolInputSchema(hiddenByProjection.parameters)).toEqual({
+      schema: {
+        type: "object",
+        properties: {},
+      },
+      violations: ["parameters.anyOf[0].$dynamicRef"],
+    });
+    expect(filterRuntimeCompatibleTools([hiddenByProjection])).toEqual({
+      tools: [],
+      diagnostics: [
+        {
+          toolName: "fuzzplugin_dynamic_ref_union",
+          toolIndex: 0,
+          violations: ["fuzzplugin_dynamic_ref_union.parameters.anyOf[0].$dynamicRef"],
+        },
+      ],
+    });
+  });
+
   it("filters unsupported schemas without dropping healthy tools", () => {
     const healthy = {
       name: "healthy",

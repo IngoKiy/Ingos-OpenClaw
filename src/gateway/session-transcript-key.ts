@@ -22,8 +22,12 @@ function resolveTranscriptPathForComparison(value: string | undefined): string |
   }
   const resolved = path.resolve(trimmed);
   try {
+    // Existing files compare by realpath so symlinked session dirs still route
+    // transcript events to the same canonical session owner.
     return fs.realpathSync(resolved);
   } catch {
+    // Missing files can still appear in archive/delete events; use the absolute
+    // path so the caller can resolve ownership from the store snapshot.
     return resolved;
   }
 }
@@ -60,7 +64,12 @@ export function clearSessionTranscriptKeyCacheForTests(): void {
   TRANSCRIPT_SESSION_KEY_CACHE.clear();
 }
 
-/** Resolve a transcript file path back to the canonical Gateway session key that owns it. */
+/**
+ * Resolve a transcript file path back to the canonical Gateway session key that owns it.
+ *
+ * The current combined store is authoritative; cached answers are reused only
+ * when the same store snapshot still maps the path to that key.
+ */
 export function resolveSessionKeyForTranscriptFile(sessionFile: string): string | undefined {
   const targetPath = resolveTranscriptPathForComparison(sessionFile);
   if (!targetPath) {

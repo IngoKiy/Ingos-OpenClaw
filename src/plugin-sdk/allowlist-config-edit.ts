@@ -15,11 +15,19 @@ type AllowlistConfigPaths = {
 };
 
 /** Labeled allowlist entries shown as account/group-specific overrides. */
-export type AllowlistGroupOverride = { label: string; entries: string[] };
+export type AllowlistGroupOverride = {
+  /** Human-readable owner of this override, such as a room, guild, or route. */
+  label: string;
+  /** Configured allowlist entries for the labeled owner. */
+  entries: string[];
+};
 /** Best-effort display-name lookup result for configured allowlist entries. */
 export type AllowlistNameResolution = Array<{
+  /** Original allowlist entry requested by the UI. */
   input: string;
+  /** Whether the channel could resolve a display name for the entry. */
   resolved: boolean;
+  /** Resolved display name, when available. */
   name?: string | null;
 }>;
 type AllowlistNormalizer = (params: {
@@ -341,8 +349,11 @@ function applyAccountScopedAllowlistConfigEdit(params: {
 
 /** Build the default account-scoped allowlist editor used by channel plugins with config-backed lists. */
 export function buildAccountScopedAllowlistConfigEditor(params: {
+  /** Channel id whose `channels.<id>` config section receives edits. */
   channelId: ChannelId;
+  /** Canonicalizes entries before add/remove comparison. */
   normalize: AllowlistNormalizer;
+  /** Maps DM/group scope to read/write/cleanup paths for this channel. */
   resolvePaths: (scope: "dm" | "group") => AllowlistConfigPaths | null;
 }): NonNullable<ChannelAllowlistAdapter["applyConfigEdit"]> {
   return ({ cfg, parsedConfig, accountId, scope, action, entry }) => {
@@ -387,16 +398,24 @@ function buildAccountAllowlistAdapter<ResolvedAccount>(params: {
 
 /** Build the common DM/group allowlist adapter used by channels that store both lists in config. */
 export function buildDmGroupAccountAllowlistAdapter<ResolvedAccount>(params: {
+  /** Channel id whose `channels.<id>` config section receives edits. */
   channelId: ChannelId;
+  /** Resolves the account whose allowlist state is being read or edited. */
   resolveAccount: AllowlistAccountResolver<ResolvedAccount>;
+  /** Canonicalizes entries before add/remove comparison. */
   normalize: AllowlistNormalizer;
+  /** Reads DM allowlist entries from the resolved account. */
   resolveDmAllowFrom: (
     account: ResolvedAccount,
     context: { cfg: OpenClawConfig; accountId?: string | null },
   ) => Array<string | number> | null | undefined;
+  /** Reads group/channel allowlist entries from the resolved account. */
   resolveGroupAllowFrom: (account: ResolvedAccount) => Array<string | number> | null | undefined;
+  /** Optional DM policy label shown alongside allowlist state. */
   resolveDmPolicy?: (account: ResolvedAccount) => string | null | undefined;
+  /** Optional group policy label shown alongside allowlist state. */
   resolveGroupPolicy?: (account: ResolvedAccount) => string | null | undefined;
+  /** Optional route-specific overrides displayed below account-level group entries. */
   resolveGroupOverrides?: (account: ResolvedAccount) => AllowlistGroupOverride[] | undefined;
 }): Pick<ChannelAllowlistAdapter, "supportsScope" | "readConfig" | "applyConfigEdit"> {
   return buildAccountAllowlistAdapter({
@@ -417,14 +436,20 @@ export function buildDmGroupAccountAllowlistAdapter<ResolvedAccount>(params: {
 
 /** Build the common DM-only allowlist adapter for channels with legacy dm.allowFrom fallback paths. */
 export function buildLegacyDmAccountAllowlistAdapter<ResolvedAccount>(params: {
+  /** Channel id whose `channels.<id>` config section receives edits. */
   channelId: ChannelId;
+  /** Resolves the account whose allowlist state is being read or edited. */
   resolveAccount: AllowlistAccountResolver<ResolvedAccount>;
+  /** Canonicalizes entries before add/remove comparison. */
   normalize: AllowlistNormalizer;
+  /** Reads DM allowlist entries from the resolved account. */
   resolveDmAllowFrom: (
     account: ResolvedAccount,
     context: { cfg: OpenClawConfig; accountId?: string | null },
   ) => Array<string | number> | null | undefined;
+  /** Optional group policy label shown for channels that report group state but edit only DM. */
   resolveGroupPolicy?: (account: ResolvedAccount) => string | null | undefined;
+  /** Optional route-specific overrides displayed below legacy DM state. */
   resolveGroupOverrides?: (account: ResolvedAccount) => AllowlistGroupOverride[] | undefined;
 }): Pick<ChannelAllowlistAdapter, "supportsScope" | "readConfig" | "applyConfigEdit"> {
   return buildAccountAllowlistAdapter({

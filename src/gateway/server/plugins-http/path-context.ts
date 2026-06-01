@@ -5,11 +5,17 @@ import {
 } from "../../security-path.js";
 
 export type PluginRoutePathContext = {
+  /** Raw request pathname before security canonicalization. */
   pathname: string;
+  /** Canonical lowercase path used for ordinary route matching. */
   canonicalPath: string;
+  /** Decoded path variants retained so encoded traversal cannot bypass protected routes. */
   candidates: string[];
+  /** True when percent decoding failed before a trustworthy canonical path was available. */
   malformedEncoding: boolean;
+  /** True when canonicalization stopped before fully exhausting nested encodings. */
   decodePassLimitReached: boolean;
+  /** Lowercase raw path fallback used only when malformed encoding is present. */
   rawNormalizedPath: string;
 };
 

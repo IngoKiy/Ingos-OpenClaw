@@ -293,6 +293,7 @@ function readCallRecordEvents(stores: CallRecordStateStores): CallRecord[] {
     .map((entry) => entry.call);
 }
 
+/** Appends one canonical SQLite-backed call snapshot; runtime never writes JSONL fallback logs. */
 export function persistCallRecord(storePath: string, call: CallRecord): void {
   try {
     const stores = createCallRecordStateStores(storePath);

@@ -18,6 +18,7 @@ import {
   restoreCurrentPnpmLockedPackages,
   shouldUseLegacyPeerDepsForShrinkwrap,
   shrinkwrapPackageDirsForChangedPaths,
+  sortShrinkwrapPackages,
 } from "../../scripts/generate-npm-shrinkwrap.mjs";
 
 describe("generate-npm-shrinkwrap", () => {
@@ -328,6 +329,43 @@ describe("generate-npm-shrinkwrap", () => {
     ).toEqual(generated);
   });
 
+  it("keeps optional dependency specs ahead of duplicate dependency specs", () => {
+    const generated = {
+      packages: {
+        "": {},
+        "node_modules/parent": {
+          version: "1.0.0",
+          dependencies: {
+            forked: "^1.0.0",
+          },
+          optionalDependencies: {
+            forked: "^2.0.0",
+          },
+        },
+        "node_modules/forked": {
+          version: "2.0.0",
+        },
+      },
+    };
+    const current = {
+      packages: {
+        "": {},
+        "node_modules/parent": generated.packages["node_modules/parent"],
+        "node_modules/forked": {
+          version: "1.0.0",
+        },
+      },
+    };
+
+    expect(
+      restoreCurrentPnpmLockedPackages(
+        generated,
+        current,
+        new Set(["parent@1.0.0", "forked@1.0.0", "forked@2.0.0"]),
+      ),
+    ).toEqual(generated);
+  });
+
   it("does not restore incompatible generated shrinkwrap versions", () => {
     const generated = {
       packages: {
@@ -429,6 +467,24 @@ describe("generate-npm-shrinkwrap", () => {
         },
       },
     });
+  });
+
+  it("sorts shrinkwrap package keys after restoring current entries", () => {
+    const lockfile = {
+      packages: {
+        "node_modules/zod": { version: "4.4.3" },
+        "node_modules/qrcode/node_modules/yargs": { version: "15.4.1" },
+        "node_modules/qrcode/node_modules/cliui": { version: "6.0.0" },
+        "": {},
+      },
+    };
+
+    expect(Object.keys(sortShrinkwrapPackages(lockfile).packages)).toEqual([
+      "",
+      "node_modules/qrcode/node_modules/cliui",
+      "node_modules/qrcode/node_modules/yargs",
+      "node_modules/zod",
+    ]);
   });
 
   it("uses legacy peer resolution when package extensions mark dependency peers optional", () => {

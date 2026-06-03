@@ -685,6 +685,17 @@ function normalizeNpmVersionDrift(lockfile) {
   return lockfile;
 }
 
+function sortShrinkwrapPackages(lockfile) {
+  const packages = lockfile?.packages;
+  if (!packages || typeof packages !== "object" || Array.isArray(packages)) {
+    return lockfile;
+  }
+  lockfile.packages = Object.fromEntries(
+    Object.entries(packages).toSorted(([left], [right]) => left.localeCompare(right)),
+  );
+  return lockfile;
+}
+
 function generateShrinkwrap(packageDir, options = {}) {
   const tempDir = mkdtempSync(path.join(tmpdir(), "openclaw-shrinkwrap-"));
   try {
@@ -718,13 +729,15 @@ function generateShrinkwrap(packageDir, options = {}) {
       tempDir,
     );
     normalizeShrinkwrapOverrides(tempDir, shrinkwrapOverrides, npmInstallArgs);
-    const generated = restoreCurrentPnpmLockedPackages(
-      normalizeNpmVersionDrift(
-        applyPackageExtensionPeerMetadata(
-          JSON.parse(readFileSync(path.join(tempDir, "npm-shrinkwrap.json"), "utf8")),
+    const generated = sortShrinkwrapPackages(
+      restoreCurrentPnpmLockedPackages(
+        normalizeNpmVersionDrift(
+          applyPackageExtensionPeerMetadata(
+            JSON.parse(readFileSync(path.join(tempDir, "npm-shrinkwrap.json"), "utf8")),
+          ),
         ),
+        currentShrinkwrap,
       ),
-      currentShrinkwrap,
     );
     assertShrinkwrapMatchesPnpmLock(generated);
     return `${JSON.stringify(generated, null, 2)}\n`;
@@ -920,15 +933,6 @@ function isStablePatchDrift(generatedVersion, currentVersion) {
   );
 }
 
-function compareStableVersions(leftVersion, rightVersion) {
-  const left = stableVersionParts(leftVersion);
-  const right = stableVersionParts(rightVersion);
-  if (!left || !right) {
-    return null;
-  }
-  return left.major - right.major || left.minor - right.minor || left.patch - right.patch;
-}
-
 function stableVersionCompare(leftVersion, rightVersion) {
   const left = stableVersionParts(leftVersion);
   const right = stableVersionParts(rightVersion);
@@ -1021,10 +1025,11 @@ function dependencySpecForLockPath(packages, lockPath, dependencyName) {
 }
 
 function dependencySpecsForMetadata(metadata) {
-  return Object.entries({
-    ...(metadata.dependencies ?? {}),
-    ...(metadata.optionalDependencies ?? {}),
-  }).filter(([, spec]) => typeof spec === "string");
+  const specs = new Map(Object.entries(metadata.dependencies ?? {}));
+  for (const [dependencyName, spec] of Object.entries(metadata.optionalDependencies ?? {})) {
+    specs.set(dependencyName, spec);
+  }
+  return [...specs.entries()].filter(([, spec]) => typeof spec === "string");
 }
 
 function collectDependencyResolutionViolations(shrinkwrap) {
@@ -1445,4 +1450,5 @@ export {
   restoreCurrentPnpmLockedPackages,
   shouldUseLegacyPeerDepsForShrinkwrap,
   shrinkwrapPackageDirsForChangedPaths,
+  sortShrinkwrapPackages,
 };

@@ -1,12 +1,8 @@
 import { listLoadedChannelPlugins } from "../channels/plugins/registry-loaded.js";
+import { listChannelGatewayMethodNames } from "./channel-gateway-methods.js";
 import { GATEWAY_EVENT_UPDATE_AVAILABLE } from "./events.js";
 import { listCoreAdvertisedGatewayMethodNames } from "./methods/core-descriptors.js";
 import { GATEWAY_AUX_METHODS } from "./server-aux-methods.js";
-
-type GatewayMethodChannelPlugin = {
-  gatewayMethods?: readonly string[];
-  gatewayMethodDescriptors?: readonly { name: string }[];
-};
 
 /** Lists core methods intentionally advertised to gateway clients. */
 export function listCoreGatewayMethods(): string[] {
@@ -15,13 +11,10 @@ export function listCoreGatewayMethods(): string[] {
 
 function listChannelGatewayMethods(): string[] {
   const methods: string[] = [];
-  for (const plugin of listLoadedChannelPlugins() as GatewayMethodChannelPlugin[]) {
+  for (const plugin of listLoadedChannelPlugins()) {
     // Plugins may still expose legacy names while newer plugins expose descriptors.
     // Merge both so method discovery stays compatible during descriptor adoption.
-    methods.push(...(plugin.gatewayMethods ?? []));
-    for (const descriptor of plugin.gatewayMethodDescriptors ?? []) {
-      methods.push(descriptor.name);
-    }
+    methods.push(...listChannelGatewayMethodNames(plugin));
   }
   return methods;
 }

@@ -490,24 +490,56 @@ function convertAnthropicTools(tools: Context["tools"], isOAuthToken: boolean) {
   for (const tool of tools) {
     // Main quarantine happens when plugin tools materialize; this keeps Anthropic
     // safe for direct/custom tool arrays that bypass the plugin registry.
-    const parameters =
-      tool.parameters && typeof tool.parameters === "object" && !Array.isArray(tool.parameters)
-        ? (tool.parameters as Record<string, unknown>)
-        : undefined;
-    if (!parameters) {
+    const snapshot = readAnthropicToolSnapshot(tool);
+    if (!snapshot) {
       continue;
     }
     converted.push({
-      name: isOAuthToken ? toClaudeCodeName(tool.name) : tool.name,
-      description: tool.description,
+      name: isOAuthToken ? toClaudeCodeName(snapshot.name) : snapshot.name,
+      ...(snapshot.description !== undefined ? { description: snapshot.description } : {}),
       input_schema: {
         type: "object",
-        properties: parameters.properties || {},
-        required: parameters.required || [],
+        properties: snapshot.properties,
+        required: snapshot.required,
       },
     });
   }
   return converted;
+}
+
+type AnthropicToolSnapshot = {
+  name: string;
+  description?: string;
+  properties: unknown;
+  required: unknown;
+};
+
+function readAnthropicToolSnapshot(
+  tool: NonNullable<Context["tools"]>[number],
+): AnthropicToolSnapshot | undefined {
+  try {
+    const name = tool.name;
+    const parameters = tool.parameters;
+    if (
+      typeof name !== "string" ||
+      !name.trim() ||
+      !parameters ||
+      typeof parameters !== "object" ||
+      Array.isArray(parameters)
+    ) {
+      return undefined;
+    }
+    const description = typeof tool.description === "string" ? tool.description : undefined;
+    const record = parameters as Record<string, unknown>;
+    return {
+      name,
+      ...(description !== undefined ? { description } : {}),
+      properties: record.properties || {},
+      required: record.required || [],
+    };
+  } catch {
+    return undefined;
+  }
 }
 
 function parseAnthropicToolCallArguments(inputJson: string): unknown {

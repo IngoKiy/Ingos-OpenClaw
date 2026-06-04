@@ -1258,6 +1258,69 @@ describe("anthropic transport stream", () => {
     });
   });
 
+  it("skips tools with unreadable schemas when building Anthropic payloads", async () => {
+    const unreadableTool = {
+      name: "bad_plugin_tool",
+      description: "unreadable schema",
+      parameters: {
+        type: "object",
+        properties: {},
+      },
+      execute: async () => ({ content: [{ type: "text", text: "bad" }] }),
+    };
+    Object.defineProperty(unreadableTool, "parameters", {
+      enumerable: true,
+      get() {
+        throw new Error("fuzzplugin parameters getter exploded");
+      },
+    });
+    const unreadablePropertiesTool = {
+      name: "bad_nested_plugin_tool",
+      description: "unreadable nested schema",
+      parameters: {
+        type: "object",
+        properties: {},
+      },
+      execute: async () => ({ content: [{ type: "text", text: "bad" }] }),
+    };
+    Object.defineProperty(unreadablePropertiesTool.parameters, "properties", {
+      enumerable: true,
+      get() {
+        throw new Error("fuzzplugin properties getter exploded");
+      },
+    });
+
+    await runTransportStream(
+      makeAnthropicTransportModel(),
+      {
+        messages: [{ role: "user", content: "hello" }],
+        tools: [
+          unreadableTool,
+          unreadablePropertiesTool,
+          {
+            name: "good_plugin_tool",
+            description: "valid schema",
+            parameters: {
+              type: "object",
+              properties: {
+                query: { type: "string" },
+              },
+              required: ["query"],
+            },
+          },
+        ],
+      } as unknown as AnthropicStreamContext,
+      {
+        apiKey: "sk-ant-api",
+      } as AnthropicStreamOptions,
+    );
+
+    const tools = requireArray(latestAnthropicRequest().payload.tools, "tools");
+    expect(tools).toHaveLength(1);
+    const tool = requireRecord(tools[0], "tool");
+    expect(tool.name).toBe("good_plugin_tool");
+  });
+
   it("coerces replayed malformed tool-call args to an object for Anthropic payloads", async () => {
     const model = makeAnthropicTransportModel({
       requestTransport: {

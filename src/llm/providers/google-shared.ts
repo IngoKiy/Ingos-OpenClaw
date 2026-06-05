@@ -338,22 +338,135 @@ const JSON_SCHEMA_META_DECLARATIONS = new Set([
   "definitions", // pre-draft-2019-09 equivalent of $defs
 ]);
 
-/**
- * Strip meta-declarations from a schema obj
- */
-function sanitizeForOpenApi(schema: unknown): unknown {
-  if (typeof schema !== "object" || schema === null || Array.isArray(schema)) {
-    return schema;
-  }
+const GOOGLE_SHARED_TOOL_SCHEMA_INVALID = Symbol("google-shared-tool-schema-invalid");
 
-  const result: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(schema)) {
-    if (JSON_SCHEMA_META_DECLARATIONS.has(key)) {
-      continue;
-    }
-    result[key] = sanitizeForOpenApi(value);
+type GoogleSharedToolSnapshot = {
+  name: string;
+  description: string;
+  parameters: unknown;
+};
+
+type GoogleSharedToolSchemaCloneState = {
+  seen: WeakSet<object>;
+  nodes: number;
+};
+
+function cloneGoogleSharedToolSchemaValue(
+  value: unknown,
+  useParameters: boolean,
+  state: GoogleSharedToolSchemaCloneState,
+  depth: number,
+): unknown {
+  try {
+    return cloneGoogleSharedToolSchemaValueUnsafe(value, useParameters, state, depth);
+  } catch {
+    return GOOGLE_SHARED_TOOL_SCHEMA_INVALID;
   }
-  return result;
+}
+
+function cloneGoogleSharedToolSchemaValueUnsafe(
+  value: unknown,
+  useParameters: boolean,
+  state: GoogleSharedToolSchemaCloneState,
+  depth: number,
+): unknown {
+  if (
+    value === undefined ||
+    value === null ||
+    typeof value === "string" ||
+    typeof value === "boolean"
+  ) {
+    return value;
+  }
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : GOOGLE_SHARED_TOOL_SCHEMA_INVALID;
+  }
+  if (typeof value !== "object") {
+    return GOOGLE_SHARED_TOOL_SCHEMA_INVALID;
+  }
+  if (depth > 64 || state.nodes > 10_000 || state.seen.has(value)) {
+    return GOOGLE_SHARED_TOOL_SCHEMA_INVALID;
+  }
+  state.seen.add(value);
+  state.nodes += 1;
+  try {
+    if (Array.isArray(value)) {
+      const items: unknown[] = [];
+      for (const item of value) {
+        const cloned = cloneGoogleSharedToolSchemaValue(item, useParameters, state, depth + 1);
+        if (cloned === GOOGLE_SHARED_TOOL_SCHEMA_INVALID) {
+          return GOOGLE_SHARED_TOOL_SCHEMA_INVALID;
+        }
+        items.push(cloned);
+      }
+      return items;
+    }
+    const result = Object.create(null) as Record<string, unknown>;
+    for (const [key, item] of Object.entries(value)) {
+      if (useParameters && JSON_SCHEMA_META_DECLARATIONS.has(key)) {
+        continue;
+      }
+      const cloned = cloneGoogleSharedToolSchemaValue(item, useParameters, state, depth + 1);
+      if (cloned === GOOGLE_SHARED_TOOL_SCHEMA_INVALID) {
+        return GOOGLE_SHARED_TOOL_SCHEMA_INVALID;
+      }
+      Object.defineProperty(result, key, {
+        value: cloned,
+        enumerable: true,
+        configurable: true,
+        writable: true,
+      });
+    }
+    return result;
+  } finally {
+    state.seen.delete(value);
+  }
+}
+
+function snapshotGoogleSharedTools(
+  tools: readonly Tool[],
+  useParameters: boolean,
+): GoogleSharedToolSnapshot[] {
+  const snapshots: GoogleSharedToolSnapshot[] = [];
+  for (const tool of tools) {
+    const snapshot = snapshotGoogleSharedTool(tool, useParameters);
+    if (snapshot) {
+      snapshots.push(snapshot);
+    }
+  }
+  return snapshots;
+}
+
+function snapshotGoogleSharedTool(
+  tool: Tool,
+  useParameters: boolean,
+): GoogleSharedToolSnapshot | undefined {
+  let name: unknown;
+  let description: unknown;
+  let parameters: unknown;
+  try {
+    name = tool.name;
+    description = tool.description;
+    parameters = tool.parameters;
+  } catch {
+    return undefined;
+  }
+  if (typeof name !== "string" || name.length === 0 || typeof description !== "string") {
+    return undefined;
+  }
+  const clonedParameters = cloneGoogleSharedToolSchemaValue(
+    parameters,
+    useParameters,
+    {
+      seen: new WeakSet<object>(),
+      nodes: 0,
+    },
+    0,
+  );
+  if (clonedParameters === GOOGLE_SHARED_TOOL_SCHEMA_INVALID) {
+    return undefined;
+  }
+  return { name, description, parameters: clonedParameters };
 }
 
 /**
@@ -368,18 +481,23 @@ export function convertTools(
   tools: Tool[],
   useParameters = false,
 ): { functionDeclarations: Record<string, unknown>[] }[] | undefined {
-  if (tools.length === 0) {
+  const snapshots = snapshotGoogleSharedTools(tools, useParameters);
+  if (snapshots.length === 0) {
     return undefined;
   }
   return [
     {
-      functionDeclarations: tools.map((tool) => ({
-        name: tool.name,
-        description: tool.description,
-        ...(useParameters
-          ? { parameters: sanitizeForOpenApi(tool.parameters as unknown) }
-          : { parametersJsonSchema: tool.parameters }),
-      })),
+      functionDeclarations: snapshots.map((tool) =>
+        Object.assign(
+          {
+            name: tool.name,
+            description: tool.description,
+          },
+          useParameters
+            ? { parameters: tool.parameters }
+            : { parametersJsonSchema: tool.parameters },
+        ),
+      ),
     },
   ];
 }
@@ -473,6 +591,16 @@ export function buildGoogleGenerateContentParams<T extends GoogleApiType>(
   },
 ): GenerateContentParameters {
   const contents = convertMessages(model, context);
+  const convertedTools =
+    context.tools && context.tools.length > 0 ? convertTools(context.tools) : undefined;
+  if (
+    context.tools &&
+    context.tools.length > 0 &&
+    options.toolChoice === "any" &&
+    !convertedTools
+  ) {
+    throw new Error('Google toolChoice "any" requires at least one valid tool declaration');
+  }
 
   const generationConfig: GenerateContentConfig = {};
   if (options.temperature !== undefined) {
@@ -488,10 +616,10 @@ export function buildGoogleGenerateContentParams<T extends GoogleApiType>(
   const config: GenerateContentConfig = {
     ...(Object.keys(generationConfig).length > 0 && generationConfig),
     ...(context.systemPrompt && { systemInstruction: sanitizeSurrogates(context.systemPrompt) }),
-    ...(context.tools && context.tools.length > 0 && { tools: convertTools(context.tools) }),
+    ...(convertedTools && { tools: convertedTools }),
   };
 
-  if (context.tools && context.tools.length > 0 && options.toolChoice) {
+  if (convertedTools && options.toolChoice) {
     config.toolConfig = {
       functionCallingConfig: {
         mode: mapToolChoice(options.toolChoice),

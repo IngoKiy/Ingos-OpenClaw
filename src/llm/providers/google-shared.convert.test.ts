@@ -1,7 +1,11 @@
 // Google shared conversion tests cover runtime-to-Google payload conversion.
 import { describe, expect, it } from "vitest";
 import type { Context, Tool } from "../types.js";
-import { convertMessages, convertTools } from "./google-shared.js";
+import {
+  buildGoogleGenerateContentParams,
+  convertMessages,
+  convertTools,
+} from "./google-shared.js";
 import {
   asRecord,
   expectConvertedRoles,
@@ -148,6 +152,167 @@ describe("google-shared convertTools", () => {
     expect(items.type).toBe("string");
     expect(config.required).toEqual(["retries"]);
     expect(params.required).toEqual(["config"]);
+  });
+
+  it("skips unreadable tools while preserving healthy declarations", () => {
+    const unreadableTool = Object.create(null) as Tool;
+    Object.defineProperty(unreadableTool, "name", {
+      enumerable: true,
+      get() {
+        throw new Error("revoked tool name");
+      },
+    });
+    Object.defineProperty(unreadableTool, "description", {
+      enumerable: true,
+      value: "broken",
+    });
+    Object.defineProperty(unreadableTool, "parameters", {
+      enumerable: true,
+      value: { type: "object", properties: {} },
+    });
+    const revokedSchema = Proxy.revocable({ type: "object", properties: {} }, {});
+    revokedSchema.revoke();
+    const converted = convertTools([
+      unreadableTool,
+      {
+        name: "revoked_schema",
+        description: "Broken schema",
+        parameters: revokedSchema.proxy,
+      } as unknown as Tool,
+      {
+        name: "healthy_lookup",
+        description: "Healthy lookup",
+        parameters: {
+          type: "object",
+          properties: { query: { type: "string" } },
+          required: ["query"],
+        },
+      } as unknown as Tool,
+    ]);
+    const declarations = converted?.[0]?.functionDeclarations ?? [];
+
+    expect(declarations.map((tool) => tool.name)).toEqual(["healthy_lookup"]);
+    expect(
+      getFirstToolParameters(converted as Parameters<typeof getFirstToolParameters>[0]),
+    ).toEqual({
+      type: "object",
+      properties: { query: { type: "string" } },
+      required: ["query"],
+    });
+  });
+
+  it("allows shared sub-schemas without treating them as cycles", () => {
+    const sharedStringSchema = { type: "string" };
+    const converted = convertTools([
+      {
+        name: "shared_schema",
+        description: "Shared schema",
+        parameters: {
+          type: "object",
+          properties: {
+            first: sharedStringSchema,
+            second: sharedStringSchema,
+          },
+        },
+      } as unknown as Tool,
+    ]);
+    const params = getFirstToolParameters(
+      converted as Parameters<typeof getFirstToolParameters>[0],
+    );
+    const properties = asRecord(params.properties);
+
+    expect(properties.first).toEqual({ type: "string" });
+    expect(properties.second).toEqual({ type: "string" });
+  });
+
+  it("preserves own __proto__ schema properties", () => {
+    const properties = {};
+    Object.defineProperty(properties, "__proto__", {
+      enumerable: true,
+      configurable: true,
+      writable: true,
+      value: { type: "string" },
+    });
+    const converted = convertTools([
+      {
+        name: "proto_schema",
+        description: "Proto schema",
+        parameters: {
+          type: "object",
+          properties,
+        },
+      } as unknown as Tool,
+    ]);
+    const params = getFirstToolParameters(
+      converted as Parameters<typeof getFirstToolParameters>[0],
+    );
+    const convertedProperties = asRecord(params.properties);
+    const protoDescriptor = Object.getOwnPropertyDescriptor(convertedProperties, "__proto__");
+
+    expect(Object.hasOwn(convertedProperties, "__proto__")).toBe(true);
+    expect(asRecord(protoDescriptor?.value).type).toBe("string");
+  });
+
+  it("strips meta declarations and skips broken schemas for legacy parameters", () => {
+    const poisonedProperties = {
+      type: "object",
+      properties: {},
+    };
+    Object.defineProperty(poisonedProperties.properties, "query", {
+      enumerable: true,
+      get() {
+        throw new Error("revoked schema property");
+      },
+    });
+    const converted = convertTools(
+      [
+        {
+          name: "poisoned_schema",
+          description: "Broken schema",
+          parameters: poisonedProperties,
+        } as unknown as Tool,
+        {
+          name: "healthy_lookup",
+          description: "Healthy lookup",
+          parameters: {
+            $schema: "https://json-schema.org/draft/2020-12/schema",
+            type: "object",
+            properties: { query: { type: "string", $comment: "local note" } },
+          },
+        } as unknown as Tool,
+      ],
+      true,
+    );
+    const declarations = converted?.[0]?.functionDeclarations ?? [];
+    const params = getFirstToolParameters(
+      converted as Parameters<typeof getFirstToolParameters>[0],
+    );
+
+    expect(declarations.map((tool) => tool.name)).toEqual(["healthy_lookup"]);
+    expect(params.$schema).toBeUndefined();
+    expect(asRecord(asRecord(params.properties).query).$comment).toBeUndefined();
+  });
+
+  it("fails closed when forced tool calling has no valid declarations", () => {
+    const revokedSchema = Proxy.revocable({ type: "object", properties: {} }, {});
+    revokedSchema.revoke();
+
+    expect(() =>
+      buildGoogleGenerateContentParams(
+        makeModel("gemini-test"),
+        {
+          messages: [{ role: "user", content: "hello", timestamp: 0 }],
+          tools: [
+            {
+              name: "revoked_schema",
+              description: "Broken schema",
+              parameters: revokedSchema.proxy,
+            } as unknown as Tool,
+          ],
+        } as Context,
+        { toolChoice: "any" },
+      ),
+    ).toThrow('Google toolChoice "any" requires at least one valid tool declaration');
   });
 });
 

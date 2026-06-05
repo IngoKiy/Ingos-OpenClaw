@@ -1,7 +1,7 @@
 // Agent session SDK tests cover default tool wiring, prompt preservation, and
 // session write-lock behavior.
 import { Type } from "typebox";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { Model } from "../../llm/types.js";
 import { AuthStorage } from "./auth-storage.js";
 import { createExtensionRuntime } from "./extensions/loader.js";
@@ -393,6 +393,72 @@ describe("createAgentSession tool defaults", () => {
     });
 
     expect(events).toEqual(["lock:start", "hook", "lock:end"]);
+  });
+
+  it("blocks hostile tool call metadata without trusting thrown stringification", async () => {
+    const hostileError = new Error("metadata denied");
+    Object.defineProperty(hostileError, "message", {
+      get() {
+        throw new Error("message denied");
+      },
+    });
+    const handler = vi.fn(async () => undefined);
+    const handlers = new Map<string, Array<(...args: unknown[]) => Promise<unknown>>>([
+      ["tool_call", [handler]],
+    ]);
+    const hostileToolCall = Object.defineProperties(
+      {
+        type: "toolCall",
+        id: "call_1",
+        arguments: {},
+      },
+      {
+        name: {
+          enumerable: true,
+          get() {
+            throw hostileError;
+          },
+        },
+      },
+    );
+
+    const { session } = await createAgentSession({
+      model: testModel,
+      resourceLoader: createResourceLoaderWithHandlers(handlers),
+      sessionManager: SessionManager.inMemory(),
+      settingsManager: SettingsManager.inMemory(),
+      modelRegistry: ModelRegistry.inMemory(AuthStorage.inMemory()),
+    });
+
+    await expect(
+      session.agent.beforeToolCall?.({
+        assistantMessage: {
+          role: "assistant",
+          content: [],
+          api: testModel.api,
+          provider: testModel.provider,
+          model: testModel.id,
+          usage: {
+            input: 0,
+            output: 0,
+            cacheRead: 0,
+            cacheWrite: 0,
+            totalTokens: 0,
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+          },
+          stopReason: "toolUse",
+          timestamp: Date.now(),
+        },
+        toolCall: hostileToolCall as never,
+        args: {},
+        context: {
+          systemPrompt: "",
+          messages: [],
+          tools: [],
+        },
+      }),
+    ).rejects.toThrow("Extension failed, blocking execution: Unknown session extension error");
+    expect(handler).not.toHaveBeenCalled();
   });
 
   it("fences tool execution when no extension hook is registered", async () => {

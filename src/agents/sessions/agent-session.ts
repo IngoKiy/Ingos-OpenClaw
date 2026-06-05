@@ -508,10 +508,12 @@ export class AgentSession {
             input: args as Record<string, unknown>,
           });
         } catch (err) {
-          if (err instanceof Error) {
-            throw err;
-          }
-          throw new Error(`Extension failed, blocking execution: ${String(err)}`, { cause: err });
+          throw new Error(
+            `Extension failed, blocking execution: ${describeSessionExtensionError(err)}`,
+            {
+              cause: err,
+            },
+          );
         }
       });
     };

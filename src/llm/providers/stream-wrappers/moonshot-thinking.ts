@@ -10,9 +10,35 @@ type MoonshotThinkingKeep = "all";
 const MOONSHOT_THINKING_KEEP_MODEL_ID = "kimi-k2.6";
 const llmRuntimeLoader = createLazyImportLoader(() => import("openclaw/plugin-sdk/llm"));
 
+type PayloadFieldRead = { ok: true; value: unknown } | { ok: false };
+
 async function loadDefaultStreamFn(): Promise<StreamFn> {
   const runtime = await llmRuntimeLoader.load();
   return runtime.streamSimple;
+}
+
+function readPayloadField(record: Record<string, unknown>, key: string): PayloadFieldRead {
+  try {
+    return { ok: true, value: record[key] };
+  } catch {
+    return { ok: false };
+  }
+}
+
+function setPayloadField(record: Record<string, unknown>, key: string, value: unknown): void {
+  try {
+    record[key] = value;
+  } catch {
+    // Payload compatibility is best-effort; hostile setters should not abort the turn.
+  }
+}
+
+function deletePayloadField(record: Record<string, unknown>, key: string): void {
+  try {
+    delete record[key];
+  } catch {
+    // Payload compatibility is best-effort; hostile delete traps should not abort the turn.
+  }
 }
 
 function normalizeMoonshotThinkingType(value: unknown): MoonshotThinkingType | undefined {
@@ -33,7 +59,8 @@ function normalizeMoonshotThinkingType(value: unknown): MoonshotThinkingType | u
     return undefined;
   }
   if (value && typeof value === "object" && !Array.isArray(value)) {
-    return normalizeMoonshotThinkingType((value as Record<string, unknown>).type);
+    const type = readPayloadField(value as Record<string, unknown>, "type");
+    return type.ok ? normalizeMoonshotThinkingType(type.value) : undefined;
   }
   return undefined;
 }
@@ -42,7 +69,11 @@ function normalizeMoonshotThinkingKeep(value: unknown): MoonshotThinkingKeep | u
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return undefined;
   }
-  const keepValue = (value as Record<string, unknown>).keep;
+  const keep = readPayloadField(value as Record<string, unknown>, "keep");
+  if (!keep.ok) {
+    return undefined;
+  }
+  const keepValue = keep.value;
   if (typeof keepValue !== "string") {
     return undefined;
   }
@@ -54,7 +85,11 @@ function isMoonshotToolChoiceCompatible(toolChoice: unknown): boolean {
     return true;
   }
   if (typeof toolChoice === "object" && !Array.isArray(toolChoice)) {
-    const typeValue = (toolChoice as Record<string, unknown>).type;
+    const type = readPayloadField(toolChoice as Record<string, unknown>, "type");
+    if (!type.ok) {
+      return false;
+    }
+    const typeValue = type.value;
     return typeValue === "auto" || typeValue === "none";
   }
   return false;
@@ -64,7 +99,11 @@ function isPinnedToolChoice(toolChoice: unknown): boolean {
   if (!toolChoice || typeof toolChoice !== "object" || Array.isArray(toolChoice)) {
     return false;
   }
-  const typeValue = (toolChoice as Record<string, unknown>).type;
+  const type = readPayloadField(toolChoice as Record<string, unknown>, "type");
+  if (!type.ok) {
+    return false;
+  }
+  const typeValue = type.value;
   return typeValue === "tool" || typeValue === "function";
 }
 
@@ -99,34 +138,48 @@ export function createMoonshotThinkingWrapper(
   return async (model, context, options) => {
     const underlying = baseStreamFn ?? (await loadDefaultStreamFn());
     return streamWithPayloadPatch(underlying, model, context, options, (payloadObj) => {
-      let effectiveThinkingType = normalizeMoonshotThinkingType(payloadObj.thinking);
+      const thinking = readPayloadField(payloadObj, "thinking");
+      let effectiveThinkingType = thinking.ok
+        ? normalizeMoonshotThinkingType(thinking.value)
+        : undefined;
 
       if (thinkingType) {
-        payloadObj.thinking = { type: thinkingType };
+        setPayloadField(payloadObj, "thinking", { type: thinkingType });
         effectiveThinkingType = thinkingType;
       }
 
-      if (
-        effectiveThinkingType === "enabled" &&
-        !isMoonshotToolChoiceCompatible(payloadObj.tool_choice)
-      ) {
-        if (payloadObj.tool_choice === "required") {
-          payloadObj.tool_choice = "auto";
-        } else if (isPinnedToolChoice(payloadObj.tool_choice)) {
-          payloadObj.thinking = { type: "disabled" };
-          effectiveThinkingType = "disabled";
+      const toolChoice = readPayloadField(payloadObj, "tool_choice");
+      if (effectiveThinkingType === "enabled") {
+        if (!toolChoice.ok) {
+          deletePayloadField(payloadObj, "tool_choice");
+        } else if (!isMoonshotToolChoiceCompatible(toolChoice.value)) {
+          if (toolChoice.value === "required") {
+            setPayloadField(payloadObj, "tool_choice", "auto");
+          } else if (isPinnedToolChoice(toolChoice.value)) {
+            setPayloadField(payloadObj, "thinking", { type: "disabled" });
+            effectiveThinkingType = "disabled";
+          } else if (
+            toolChoice.value &&
+            typeof toolChoice.value === "object" &&
+            !Array.isArray(toolChoice.value) &&
+            !readPayloadField(toolChoice.value as Record<string, unknown>, "type").ok
+          ) {
+            deletePayloadField(payloadObj, "tool_choice");
+          }
         }
       }
 
-      // thinking.keep is only valid on kimi-k2.6 when thinking is enabled. Gate
-      // by the final payload.model and final type so stray config never leaks.
-      const isKeepCapableModel = payloadObj.model === MOONSHOT_THINKING_KEEP_MODEL_ID;
-      if (payloadObj.thinking && typeof payloadObj.thinking === "object") {
-        const thinkingObj = payloadObj.thinking as Record<string, unknown>;
+      const modelValue = readPayloadField(payloadObj, "model");
+      const finalThinking = readPayloadField(payloadObj, "thinking");
+      const isKeepCapableModel =
+        modelValue.ok && modelValue.value === MOONSHOT_THINKING_KEEP_MODEL_ID;
+      if (finalThinking.ok && finalThinking.value && typeof finalThinking.value === "object") {
+        const thinkingObj = finalThinking.value as Record<string, unknown>;
+        const keep = readPayloadField(thinkingObj, "keep");
         if (isKeepCapableModel && effectiveThinkingType === "enabled" && thinkingKeep === "all") {
-          thinkingObj.keep = "all";
-        } else if ("keep" in thinkingObj) {
-          delete thinkingObj.keep;
+          setPayloadField(thinkingObj, "keep", "all");
+        } else if (keep.ok) {
+          deletePayloadField(thinkingObj, "keep");
         }
       }
     });

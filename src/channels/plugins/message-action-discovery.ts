@@ -134,6 +134,13 @@ function readMessageToolDiscoveryValue<T>(params: {
   }
 }
 
+type SchemaContributionsRead = {
+  contributions: ChannelMessageToolSchemaContribution[];
+  unreadable: boolean;
+};
+
+const unreadableSchemaContribution = Symbol("unreadableSchemaContribution");
+
 /**
  * Normalizes plugin schema contributions into a list for merge callers.
  */
@@ -144,40 +151,49 @@ function normalizeToolSchemaContributions(
     | ChannelMessageToolSchemaContribution[]
     | null
     | undefined,
-): ChannelMessageToolSchemaContribution[] {
+): SchemaContributionsRead {
   if (!value) {
-    return [];
+    return { contributions: [], unreadable: false };
   }
   if (!Array.isArray(value)) {
-    return [value];
+    return { contributions: [value], unreadable: false };
   }
   const length = readMessageToolDiscoveryValue({
     pluginId,
     field: "schema.length",
-    fallback: 0,
+    fallback: null,
     read: () => value.length,
   });
+  if (length === null) {
+    return { contributions: [], unreadable: true };
+  }
   const contributions: ChannelMessageToolSchemaContribution[] = [];
+  let unreadable = false;
   for (let index = 0; index < length; index += 1) {
     const contribution = readMessageToolDiscoveryValue<
-      ChannelMessageToolSchemaContribution | undefined
+      ChannelMessageToolSchemaContribution | undefined | typeof unreadableSchemaContribution
     >({
       pluginId,
       field: `schema.${index}`,
-      fallback: undefined,
+      fallback: unreadableSchemaContribution,
       read: () => value[index],
     });
+    if (contribution === unreadableSchemaContribution) {
+      unreadable = true;
+      continue;
+    }
     if (contribution) {
       contributions.push(contribution);
     }
   }
-  return contributions;
+  return { contributions, unreadable };
 }
 
 type ResolvedChannelMessageActionDiscovery = {
   actions: ChannelMessageActionName[];
   capabilities: readonly ChannelMessageCapability[];
   schemaContributions: ChannelMessageToolSchemaContribution[];
+  schemaContributionsUnreadable: boolean;
   mediaSourceParams: readonly string[];
 };
 
@@ -319,6 +335,7 @@ export function resolveMessageActionDiscoveryForPlugin(params: {
       actions: [],
       capabilities: [],
       schemaContributions: [],
+      schemaContributionsUnreadable: false,
       mediaSourceParams: [],
     };
   }
@@ -344,14 +361,14 @@ export function resolveMessageActionDiscoveryForPlugin(params: {
         read: () => (Array.isArray(described?.capabilities) ? described.capabilities : []),
       })
     : [];
-  const schemaContributions = params.includeSchema
+  const schemaRead = params.includeSchema
     ? readMessageToolDiscoveryValue({
         pluginId: params.pluginId,
         field: "schema",
-        fallback: [],
+        fallback: { contributions: [], unreadable: true },
         read: () => normalizeToolSchemaContributions(params.pluginId, described?.schema),
       })
-    : [];
+    : { contributions: [], unreadable: false };
   const mediaSourceParams = readMessageToolDiscoveryValue({
     pluginId: params.pluginId,
     field: "mediaSourceParams",
@@ -361,7 +378,8 @@ export function resolveMessageActionDiscoveryForPlugin(params: {
   return {
     actions,
     capabilities,
-    schemaContributions,
+    schemaContributions: schemaRead.contributions,
+    schemaContributionsUnreadable: schemaRead.unreadable,
     mediaSourceParams,
   };
 }
@@ -407,6 +425,9 @@ export function listCrossChannelSchemaSupportedMessageActions(
     includeActions: true,
     includeSchema: true,
   });
+  if (resolved.schemaContributionsUnreadable) {
+    return [];
+  }
   const schemaBlockedActions = new Set<ChannelMessageActionName>();
   for (const contribution of resolved.schemaContributions) {
     // Current-channel-only schema params are not safe for cross-channel tool

@@ -285,6 +285,57 @@ describe("message action capability checks", () => {
     expect(errorSpy).toHaveBeenCalledOnce();
   });
 
+  it("fails closed when schema array entries are unreadable for cross-channel actions", () => {
+    const schemaEntries = [
+      undefined,
+      {
+        visibility: "all-configured",
+        properties: {
+          safeField: Type.Optional(Type.String()),
+        },
+      },
+    ] as ChannelMessageToolSchemaContribution[];
+    Object.defineProperty(schemaEntries, "0", {
+      enumerable: true,
+      get() {
+        throw new Error("schema array entry exploded");
+      },
+    });
+    const schemaPlugin: ChannelPlugin = {
+      ...createChannelTestPluginBase({
+        id: "demo-schema-array-cross-channel",
+        label: "Demo Schema Array Cross Channel",
+        capabilities: { chatTypes: ["direct", "group"] },
+        config: {
+          listAccountIds: () => ["default"],
+        },
+      }),
+      actions: {
+        describeMessageTool: () => ({
+          actions: ["read", "unpin"],
+          schema: schemaEntries,
+        }),
+      },
+    };
+    setActivePluginRegistry(
+      createTestRegistry([
+        {
+          pluginId: "demo-schema-array-cross-channel",
+          source: "test",
+          plugin: schemaPlugin,
+        },
+      ]),
+    );
+
+    expect(
+      listCrossChannelSchemaSupportedMessageActions({
+        cfg: {} as OpenClawConfig,
+        channel: "demo-schema-array-cross-channel",
+      }),
+    ).toStrictEqual([]);
+    expect(errorSpy).toHaveBeenCalledOnce();
+  });
+
   it("skips unreadable schema property fields without dropping healthy siblings", () => {
     const properties = {
       safeField: Type.Optional(Type.String()),

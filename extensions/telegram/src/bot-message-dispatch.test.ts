@@ -106,10 +106,19 @@ const resolveSessionStoreEntry = vi.hoisted(() =>
   })),
 );
 const updateSessionStoreEntry = vi.hoisted(() => vi.fn(async () => null));
+const getGlobalHookRunner = vi.hoisted(() => vi.fn((): unknown => undefined));
 
 vi.mock("./draft-stream.js", () => ({
   createTelegramDraftStream,
 }));
+
+vi.mock("openclaw/plugin-sdk/plugin-runtime", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("openclaw/plugin-sdk/plugin-runtime")>();
+  return {
+    ...actual,
+    getGlobalHookRunner,
+  };
+});
 
 vi.mock("openclaw/plugin-sdk/channel-outbound", async (importOriginal) => {
   const actual = await importOriginal<typeof import("openclaw/plugin-sdk/channel-outbound")>();
@@ -243,6 +252,8 @@ describe("dispatchTelegramMessage draft streaming", () => {
     resetPluginStateStoreForTests({ closeDatabase: false });
     installTelegramStateRuntimeForTest();
     resetTelegramReplyFenceForTests();
+    getGlobalHookRunner.mockReset();
+    getGlobalHookRunner.mockReturnValue(undefined);
     createTelegramDraftStream.mockReset();
     dispatchReplyWithBufferedBlockDispatcher.mockReset();
     deliverReplies.mockReset();
@@ -495,6 +506,20 @@ describe("dispatchTelegramMessage draft streaming", () => {
         editForumTopic: vi.fn().mockResolvedValue(true),
       },
     } as unknown as Bot;
+  }
+
+  function installMessageSendingHook(
+    runMessageSending: (
+      payload: unknown,
+      context: unknown,
+    ) => Promise<{ cancel?: boolean; content?: string } | undefined>,
+  ) {
+    const runner = {
+      hasHooks: (name: string) => name === "message_sending",
+      runMessageSending: vi.fn(runMessageSending),
+    };
+    getGlobalHookRunner.mockReturnValue(runner);
+    return runner.runMessageSending;
   }
 
   function createRuntime(): Parameters<typeof dispatchTelegramMessage>[0]["runtime"] {
@@ -1563,6 +1588,121 @@ describe("dispatchTelegramMessage draft streaming", () => {
       sessionKey: "agent:default:telegram:direct:123",
       messageId: "m1",
     });
+  });
+
+  it("runs the message_sending hook on streamed preview-finalized agent replies", async () => {
+    setupDraftStreams({ answerMessageId: 2001 });
+    const runMessageSending = installMessageSendingHook(async () => undefined);
+    const context = createContext();
+    context.ctxPayload.SessionKey = "agent:default:telegram:direct:123";
+    loadSessionStore.mockReturnValue({
+      "agent:default:telegram:direct:123": { sessionId: "s1" },
+    });
+    dispatchReplyWithBufferedBlockDispatcher.mockImplementation(async ({ dispatcherOptions }) => {
+      await dispatcherOptions.deliver({ text: "Final answer" }, { kind: "final" });
+      return { queuedFinal: true };
+    });
+    const bot = createBot();
+
+    await dispatchWithContext({ context, bot });
+
+    expect(runMessageSending).toHaveBeenCalledTimes(1);
+    expectRecordFields(mockCallArg(runMessageSending, 0, 0), {
+      to: "123",
+      content: "Final answer",
+      threadId: 777,
+    });
+    expectRecordFields(mockCallArg(runMessageSending, 0, 1), {
+      channelId: "telegram",
+      accountId: "default",
+      conversationId: "123",
+    });
+    // Pass-through hook: the committed message is left untouched.
+    expect(editMessageTelegram).not.toHaveBeenCalled();
+    expect(bot.api["deleteMessage"]).not.toHaveBeenCalled();
+    expect(emitInternalMessageSentHook).toHaveBeenCalledWith(
+      expect.objectContaining({ content: "Final answer", messageId: 2001, success: true }),
+    );
+  });
+
+  it("deletes the streamed reply when message_sending cancels it", async () => {
+    setupDraftStreams({ answerMessageId: 2001 });
+    installMessageSendingHook(async () => ({ cancel: true }));
+    const context = createContext();
+    context.ctxPayload.SessionKey = "agent:default:telegram:direct:123";
+    loadSessionStore.mockReturnValue({
+      "agent:default:telegram:direct:123": { sessionId: "s1" },
+    });
+    dispatchReplyWithBufferedBlockDispatcher.mockImplementation(async ({ dispatcherOptions }) => {
+      await dispatcherOptions.deliver({ text: "Secret answer" }, { kind: "final" });
+      return { queuedFinal: true };
+    });
+    const bot = createBot();
+
+    await dispatchWithContext({ context, bot });
+
+    expect(bot.api["deleteMessage"]).toHaveBeenCalledWith(123, 2001);
+    // Cancelled: skip message_sent emission, prompt-context recording, and mirroring.
+    expect(emitInternalMessageSentHook).not.toHaveBeenCalled();
+    expect(recordOutboundMessageForPromptContext).not.toHaveBeenCalled();
+  });
+
+  it("edits the streamed reply when message_sending rewrites it", async () => {
+    setupDraftStreams({ answerMessageId: 2001 });
+    installMessageSendingHook(async () => ({ content: "Redacted answer" }));
+    const context = createContext();
+    context.ctxPayload.SessionKey = "agent:default:telegram:direct:123";
+    loadSessionStore.mockReturnValue({
+      "agent:default:telegram:direct:123": { sessionId: "s1" },
+    });
+    dispatchReplyWithBufferedBlockDispatcher.mockImplementation(async ({ dispatcherOptions }) => {
+      await dispatcherOptions.deliver({ text: "Original answer" }, { kind: "final" });
+      return { queuedFinal: true };
+    });
+    const bot = createBot();
+
+    await dispatchWithContext({ context, bot });
+
+    // Rewrite edits the committed message in place (buttons preserved by omission).
+    expect(editMessageTelegram).toHaveBeenCalledTimes(1);
+    expect(mockCallArg(editMessageTelegram, 0, 0)).toBe(123);
+    expect(mockCallArg(editMessageTelegram, 0, 1)).toBe(2001);
+    expect(mockCallArg(editMessageTelegram, 0, 2)).toBe("Redacted answer");
+    expect(bot.api["deleteMessage"]).not.toHaveBeenCalled();
+    // Downstream context/transcript reflect the rewritten content.
+    expect(emitInternalMessageSentHook).toHaveBeenCalledWith(
+      expect.objectContaining({ content: "Redacted answer", messageId: 2001 }),
+    );
+    expectRecordFields(mockCallArg(recordOutboundMessageForPromptContext, 0), {
+      text: "Redacted answer",
+    });
+  });
+
+  it("does not gate streamed replies when no message_sending hook is registered", async () => {
+    setupDraftStreams({ answerMessageId: 2001 });
+    const runMessageSending = vi.fn(async () => ({ cancel: true }));
+    getGlobalHookRunner.mockReturnValue({
+      hasHooks: (name: string) => name !== "message_sending",
+      runMessageSending,
+    });
+    const context = createContext();
+    context.ctxPayload.SessionKey = "agent:default:telegram:direct:123";
+    loadSessionStore.mockReturnValue({
+      "agent:default:telegram:direct:123": { sessionId: "s1" },
+    });
+    dispatchReplyWithBufferedBlockDispatcher.mockImplementation(async ({ dispatcherOptions }) => {
+      await dispatcherOptions.deliver({ text: "Final answer" }, { kind: "final" });
+      return { queuedFinal: true };
+    });
+    const bot = createBot();
+
+    await dispatchWithContext({ context, bot });
+
+    expect(runMessageSending).not.toHaveBeenCalled();
+    expect(bot.api["deleteMessage"]).not.toHaveBeenCalled();
+    expect(emitInternalMessageSentHook).toHaveBeenCalledWith(
+      expect.objectContaining({ content: "Final answer", messageId: 2001 }),
+    );
   });
 
   it("advances the session marker after mirroring preview-finalized finals", async () => {

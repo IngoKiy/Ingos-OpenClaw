@@ -572,12 +572,23 @@ export async function dispatchInboundMessageWithBufferedDispatcher(params: {
     finalized,
     replyPayloadRunState,
   );
+  // A channel-supplied beforeDeliver must compose WITH the canonical message_sending
+  // gate, not replace it (issue #92374). Channels that run message_sending themselves
+  // at delivery time opt out via runsMessageSendingAtDelivery so the hook stays
+  // exactly-once and per-message rather than per-streamed-block.
+  const messageSendingBeforeDeliver = params.dispatcherOptions.runsMessageSendingAtDelivery
+    ? undefined
+    : buildMessageSendingBeforeDeliver(finalized);
   const globalBeforeDeliver = combineBeforeDeliverHooks(
     replyPayloadBeforeDeliver,
-    buildMessageSendingBeforeDeliver(finalized),
+    messageSendingBeforeDeliver,
   );
   const configuredBeforeDeliver = params.dispatcherOptions.beforeDeliver
-    ? combineBeforeDeliverHooks(params.dispatcherOptions.beforeDeliver, replyPayloadBeforeDeliver)
+    ? combineBeforeDeliverHooks(
+        params.dispatcherOptions.beforeDeliver,
+        replyPayloadBeforeDeliver,
+        messageSendingBeforeDeliver,
+      )
     : globalBeforeDeliver;
   const beforeDeliver: ReplyDispatchBeforeDeliver | undefined =
     foregroundReplyFence || configuredBeforeDeliver
@@ -671,12 +682,22 @@ export async function dispatchInboundMessageWithDispatcher(params: {
     params.ctx,
     replyPayloadRunState,
   );
+  // See dispatchInboundMessageWithBufferedDispatcher: compose the channel-supplied
+  // beforeDeliver WITH the canonical message_sending gate (issue #92374), unless the
+  // channel runs message_sending itself at delivery time.
+  const messageSendingBeforeDeliver = params.dispatcherOptions.runsMessageSendingAtDelivery
+    ? undefined
+    : buildMessageSendingBeforeDeliver(params.ctx);
   const globalBeforeDeliver = combineBeforeDeliverHooks(
     replyPayloadBeforeDeliver,
-    buildMessageSendingBeforeDeliver(params.ctx),
+    messageSendingBeforeDeliver,
   );
   const composedBeforeDeliver = params.dispatcherOptions.beforeDeliver
-    ? combineBeforeDeliverHooks(params.dispatcherOptions.beforeDeliver, replyPayloadBeforeDeliver)
+    ? combineBeforeDeliverHooks(
+        params.dispatcherOptions.beforeDeliver,
+        replyPayloadBeforeDeliver,
+        messageSendingBeforeDeliver,
+      )
     : globalBeforeDeliver;
   const dispatcher = createReplyDispatcher({
     ...params.dispatcherOptions,

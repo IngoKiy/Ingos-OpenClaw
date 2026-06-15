@@ -41,6 +41,7 @@ import type {
 import { formatErrorMessage } from "openclaw/plugin-sdk/error-runtime";
 import { normalizeMessagePresentation } from "openclaw/plugin-sdk/interactive-runtime";
 import { parseStrictPositiveInteger } from "openclaw/plugin-sdk/number-runtime";
+import { getGlobalHookRunner } from "openclaw/plugin-sdk/plugin-runtime";
 import { createChannelHistoryWindow } from "openclaw/plugin-sdk/reply-history";
 import {
   isReplyPayloadNonTerminalToolErrorWarning,
@@ -1658,15 +1659,90 @@ export const dispatchTelegramMessage = async ({
       }
       return result.delivered;
     };
+    // Run the plugin `message_sending` hook on streamed/preview-finalized agent replies.
+    // These commit the visible message by editing the live draft, so they never traverse
+    // `deliverReplies` (where Telegram normally runs `message_sending`) and the dispatcher
+    // seam is opted out via runsMessageSendingAtDelivery. This is the one place every
+    // preview-finalized answer funnels through, so it is the canonical gate for them.
+    // The streamed text was already shown incrementally, so cancel deletes the persisted
+    // message and a rewrite edits it in place (buttons are preserved when omitted). See #92374.
+    const runStreamedFinalMessageSending = async (
+      visibleContent: string,
+      messageId: number,
+    ): Promise<{ cancel: true } | { content: string }> => {
+      const hookRunner = getGlobalHookRunner();
+      if (!hookRunner?.hasHooks("message_sending")) {
+        return { content: visibleContent };
+      }
+      const hookResult = await hookRunner.runMessageSending(
+        {
+          to: String(chatId),
+          content: visibleContent,
+          threadId: threadSpec.id,
+          metadata: { channel: "telegram", threadId: threadSpec.id },
+        },
+        {
+          channelId: "telegram",
+          accountId: route.accountId,
+          conversationId: String(chatId),
+        },
+      );
+      if (hookResult?.cancel) {
+        try {
+          await bot.api.deleteMessage(chatId, messageId);
+        } catch (err: unknown) {
+          logVerbose(
+            `telegram: message_sending cancel could not delete streamed reply: ${formatErrorMessage(
+              err,
+            )}`,
+          );
+        }
+        return { cancel: true };
+      }
+      if (typeof hookResult?.content === "string" && hookResult.content !== visibleContent) {
+        try {
+          await (telegramDeps.editMessageTelegram ?? editMessageTelegram)(
+            chatId,
+            messageId,
+            hookResult.content,
+            {
+              api: bot.api,
+              cfg,
+              accountId: route.accountId,
+              linkPreview: telegramCfg.linkPreview,
+            },
+          );
+          return { content: hookResult.content };
+        } catch (err: unknown) {
+          logVerbose(
+            `telegram: message_sending rewrite could not edit streamed reply: ${formatErrorMessage(
+              err,
+            )}`,
+          );
+          // Fall through with the rewritten content so downstream context stays consistent
+          // with the hook's intent even if the visible edit failed.
+          return { content: hookResult.content };
+        }
+      }
+      return { content: visibleContent };
+    };
     const emitPreviewFinalizedHook = async (result: LaneDeliveryResult) => {
       if (isDispatchSuperseded() || result.kind !== "preview-finalized") {
         return;
       }
+      const visibleContent = result.delivery.promptContextContent ?? result.delivery.content;
+      const gated = await runStreamedFinalMessageSending(visibleContent, result.delivery.messageId);
+      if ("cancel" in gated) {
+        return;
+      }
+      const finalContent =
+        gated.content === visibleContent ? result.delivery.content : gated.content;
+      const finalPromptContext = gated.content;
       (telegramDeps.emitInternalMessageSentHook ?? emitInternalMessageSentHook)({
         sessionKeyForInternalHooks: deliveryBaseOptions.sessionKeyForInternalHooks,
         chatId: deliveryBaseOptions.chatId,
         accountId: deliveryBaseOptions.accountId,
-        content: result.delivery.content,
+        content: finalContent,
         success: true,
         messageId: result.delivery.messageId,
         isGroup: deliveryBaseOptions.mirrorIsGroup,
@@ -1682,7 +1758,7 @@ export const dispatchTelegramMessage = async ({
           chatId: deliveryBaseOptions.chatId,
           message: { message_id: result.delivery.messageId },
           messageId: result.delivery.messageId,
-          text: result.delivery.promptContextContent ?? result.delivery.content,
+          text: finalPromptContext,
           ...(threadSpec.id !== undefined ? { messageThreadId: threadSpec.id } : {}),
         });
       } catch (error) {
@@ -1692,14 +1768,12 @@ export const dispatchTelegramMessage = async ({
           )}`,
         );
       }
-      if (deliveryBaseOptions.transcriptMirror && result.delivery.content) {
-        void deliveryBaseOptions
-          .transcriptMirror({ text: result.delivery.content })
-          .catch((err: unknown) => {
-            logVerbose(
-              `telegram preview-finalized transcriptMirror failed: ${formatErrorMessage(err)}`,
-            );
-          });
+      if (deliveryBaseOptions.transcriptMirror && finalContent) {
+        void deliveryBaseOptions.transcriptMirror({ text: finalContent }).catch((err: unknown) => {
+          logVerbose(
+            `telegram preview-finalized transcriptMirror failed: ${formatErrorMessage(err)}`,
+          );
+        });
       }
     };
     const finalizeSkippedDuplicateAnswerBlockDraft = async () => {
@@ -1916,6 +1990,10 @@ export const dispatchTelegramMessage = async ({
                 cfg,
                 dispatcherOptions: {
                   ...replyPipeline,
+                  // Telegram runs the message_sending plugin hook itself at delivery
+                  // time (deliverReplies + streaming finalizer), so the dispatcher must
+                  // not also compose it into beforeDeliver. See issue #92374.
+                  runsMessageSendingAtDelivery: true,
                   beforeDeliver: async (payload) => payload,
                   onBeforeDeliverCancelled: (payload, info) => {
                     if (info.kind === "block") {

@@ -1294,6 +1294,9 @@ export const registerTelegramNativeCommands = ({
           cfg: executionCfg,
           dispatcherOptions: {
             ...replyPipeline,
+            // Telegram runs the message_sending plugin hook itself at delivery time
+            // (deliverReplies), so the dispatcher must not also compose it. See #92374.
+            runsMessageSendingAtDelivery: true,
             beforeDeliver: async (payload) => payload,
             deliver: async (payload, _info) => {
               if (

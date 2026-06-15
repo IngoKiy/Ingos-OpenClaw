@@ -59,6 +59,25 @@ function activeDiagnosticToolKeys(events: DiagnosticEventPayload[]): Set<string>
   return active;
 }
 
+async function waitForAppServerMethodOrRunFailure(
+  harness: ReturnType<typeof createStartedThreadHarness>,
+  run: Promise<unknown>,
+  method: string,
+  timeoutMs = 120_000,
+): Promise<void> {
+  await Promise.race([
+    harness.waitForMethod(method, timeoutMs),
+    run.then(
+      () => {
+        throw new Error(`app-server run completed before ${method}`);
+      },
+      (error: unknown) => {
+        throw error instanceof Error ? error : new Error(String(error));
+      },
+    ),
+  ]);
+}
+
 setupRunAttemptTestHooks();
 
 describe("runCodexAppServerAttempt dynamic tools", () => {
@@ -120,7 +139,7 @@ describe("runCodexAppServerAttempt dynamic tools", () => {
     );
 
     const run = runCodexAppServerAttempt(params, { clientFactory: harness.clientFactory });
-    await harness.waitForMethod("thread/start");
+    await waitForAppServerMethodOrRunFailure(harness, run, "thread/start", 240_000);
     await vi.waitFor(() =>
       expect(onExecutionPhase).toHaveBeenCalledWith(
         expect.objectContaining({ phase: "turn_accepted" }),
@@ -243,7 +262,7 @@ describe("runCodexAppServerAttempt dynamic tools", () => {
     await run;
 
     expect(terminalPresentation).toBe("later dynamic summary");
-  }, 300_000);
+  }, 360_000);
 
   it("suppresses a late dynamic tool presentation after its timeout response", async () => {
     let resolveSlowTool!: (result: ReturnType<typeof textToolResult>) => void;
@@ -287,8 +306,8 @@ describe("runCodexAppServerAttempt dynamic tools", () => {
       }),
     ]);
 
-    const run = runCodexAppServerAttempt(params);
-    await harness.waitForMethod("thread/start");
+    const run = runCodexAppServerAttempt(params, { clientFactory: harness.clientFactory });
+    await waitForAppServerMethodOrRunFailure(harness, run, "thread/start");
     await vi.waitFor(() =>
       expect(onExecutionPhase).toHaveBeenCalledWith(
         expect.objectContaining({ phase: "turn_accepted" }),
@@ -357,8 +376,8 @@ describe("runCodexAppServerAttempt dynamic tools", () => {
     params.onAgentEvent = onRunAgentEvent;
     params.onExecutionPhase = onExecutionPhase;
 
-    const run = runCodexAppServerAttempt(params);
-    await harness.waitForMethod("thread/start");
+    const run = runCodexAppServerAttempt(params, { clientFactory: harness.clientFactory });
+    await waitForAppServerMethodOrRunFailure(harness, run, "thread/start");
     await vi.waitFor(() =>
       expect(onExecutionPhase).toHaveBeenCalledWith(
         expect.objectContaining({ phase: "turn_accepted" }),

@@ -716,7 +716,7 @@ struct CommandSessionsScreen: View {
     private var headerDetail: String {
         if self.isLoading, self.sessions.isEmpty { return "Loading recent sessions" }
         let count = self.sessionRows.count
-        if count == 0 {
+        if self.sessionRows.isEmpty {
             return self.appModel.isCommandSessionListAvailable ? "No recent sessions" : "Gateway offline"
         }
         return "\(count) \(count == 1 ? "session" : "sessions")"

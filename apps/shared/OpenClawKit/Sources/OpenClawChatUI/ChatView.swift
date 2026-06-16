@@ -165,11 +165,11 @@ public struct OpenClawChatView: View {
 
                     Color.clear
                     #if os(macOS)
-                        .frame(height: Layout.messageListPaddingBottom)
+                    .frame(height: Layout.messageListPaddingBottom)
                     #else
-                        .frame(height: Layout.messageListPaddingBottom + 1)
+                    .frame(height: Layout.messageListPaddingBottom + 1)
                     #endif
-                        .id(self.scrollerBottomID)
+                    .id(self.scrollerBottomID)
                 }
                 // Use scroll targets for stable auto-scroll without ScrollViewReader relayout glitches.
                 .scrollTargetLayout()

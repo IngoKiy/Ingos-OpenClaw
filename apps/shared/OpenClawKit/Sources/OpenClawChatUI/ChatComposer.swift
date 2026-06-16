@@ -111,10 +111,10 @@ struct OpenClawChatComposer: View {
         }
         #else
         .onChange(of: self.isComposerEnabled) { _, isEnabled in
-                if !isEnabled {
-                    self.isFocused = false
-                }
+            if !isEnabled {
+                self.isFocused = false
             }
+        }
         #endif
     }
 

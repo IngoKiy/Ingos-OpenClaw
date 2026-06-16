@@ -1387,7 +1387,7 @@ struct IPadWorkboardDispatchSummary: Decodable {
     }
 
     private static func outcomeText(_ count: Int, _ label: String) -> String? {
-        guard count > 0 else { return nil }
+        guard count >= 1 else { return nil }
         return "\(count) \(label)"
     }
 }

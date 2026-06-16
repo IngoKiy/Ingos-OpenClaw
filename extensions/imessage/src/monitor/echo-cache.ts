@@ -35,29 +35,27 @@ export type SentMessageCache = {
 const SENT_MESSAGE_TEXT_TTL_MS = 4_000;
 const SENT_MESSAGE_ID_TTL_MS = 60_000;
 
-function stripLeadingEchoCorruptionMarkers(text: string): string {
-  let start = 0;
-  while (start < text.length) {
-    const marker = text.charCodeAt(start);
-    if (
-      marker !== 0x0000 &&
-      marker !== 0xfeff &&
-      marker !== 0xfffd &&
-      marker !== 0xfffe &&
-      marker !== 0xffff
-    ) {
-      break;
-    }
-    start += 1;
+function isLeadingEchoTextCorruptionMarker(code: number): boolean {
+  return (
+    code === 0x0000 || code === 0xfeff || code === 0xfffd || code === 0xfffe || code === 0xffff
+  );
+}
+
+function stripLeadingEchoTextCorruptionMarkers(text: string): string {
+  let offset = 0;
+  while (offset < text.length && isLeadingEchoTextCorruptionMarker(text.charCodeAt(offset))) {
+    offset += 1;
   }
-  return start === 0 ? text : text.slice(start);
+  return offset === 0 ? text : text.slice(offset);
 }
 
 function normalizeEchoTextKey(text: string | undefined): string | null {
   if (!text) {
     return null;
   }
-  const normalized = stripLeadingEchoCorruptionMarkers(text.replace(/\r\n?/g, "\n").trim()).trim();
+  const normalized = stripLeadingEchoTextCorruptionMarkers(
+    text.replace(/\r\n?/g, "\n").trim(),
+  ).trim();
   return normalized ? normalized : null;
 }
 

@@ -58,8 +58,11 @@ describe("iMessage sent-message echo cache", () => {
 
     cache.remember("acct:imessage:+1555", { text: "Delayed echo reply" });
 
-    expect(cache.has("acct:imessage:+1555", { text: "\0Delayed echo reply" })).toBe(true);
-    expect(cache.has("acct:imessage:+1555", { text: "\0\0Delayed echo reply" })).toBe(true);
+    expect(
+      cache.has("acct:imessage:+1555", {
+        text: "\u0000\u0000Delayed echo reply",
+      }),
+    ).toBe(true);
   });
 
   it("keeps attributedBody corruption cleanup leading-only", () => {
@@ -76,7 +79,16 @@ describe("iMessage sent-message echo cache", () => {
     ).toBe(false);
     expect(cache.has("acct:imessage:+1555", { text: "Delayed\techo reply" })).toBe(false);
     expect(cache.has("acct:imessage:+1555", { text: "Delayed\necho reply" })).toBe(false);
-    expect(cache.has("acct:imessage:+1555", { text: "Delayed\0echo reply" })).toBe(false);
+  });
+
+  it("keeps NUL corruption cleanup leading-only", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-02-25T00:00:00Z"));
+    const cache = createSentMessageCache();
+
+    cache.remember("acct:imessage:+1555", { text: "Delayed echo reply" });
+
+    expect(cache.has("acct:imessage:+1555", { text: "Delayed\u0000echo reply" })).toBe(false);
   });
 
   it("matches by outbound message id and ignores placeholder ids", () => {

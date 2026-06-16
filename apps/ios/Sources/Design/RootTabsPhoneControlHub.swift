@@ -16,7 +16,7 @@ struct RootTabsPhoneControlHub: View {
             ZStack {
                 OpenClawProBackground()
                 ScrollView {
-                    VStack(alignment: .leading, spacing: self.isCompactHeight ? 10 : 16) {
+                    LazyVStack(alignment: .leading, spacing: self.isCompactHeight ? 10 : 16) {
                         self.headerCard
                         ForEach(self.groups) { group in
                             self.groupSection(group)
@@ -43,7 +43,12 @@ struct RootTabsPhoneControlHub: View {
     @ViewBuilder
     private var headerCard: some View {
         if self.isCompactHeight {
-            ProCard(padding: 8, radius: OpenClawProMetric.cardRadius) {
+            ProCard(
+                padding: 8,
+                radius: OpenClawProMetric.cardRadius,
+                usesGlassEffect: false,
+                castsShadow: false)
+            {
                 HStack(spacing: 12) {
                     OpenClawProMark(size: 24, shadowRadius: 3)
                     VStack(alignment: .leading, spacing: 3) {
@@ -62,7 +67,11 @@ struct RootTabsPhoneControlHub: View {
             }
             .padding(.horizontal, OpenClawProMetric.pagePadding)
         } else {
-            ProCard(radius: OpenClawProMetric.cardRadius) {
+            ProCard(
+                radius: OpenClawProMetric.cardRadius,
+                usesGlassEffect: false,
+                castsShadow: false)
+            {
                 VStack(alignment: .leading, spacing: 12) {
                     HStack(spacing: 12) {
                         OpenClawProMark(size: 32, shadowRadius: 4)
@@ -122,9 +131,15 @@ struct RootTabsPhoneControlHub: View {
     private func groupSection(_ group: RootTabs.SidebarGroup) -> some View {
         VStack(alignment: .leading, spacing: self.isCompactHeight ? 6 : 8) {
             ProSectionHeader(title: group.title.capitalized)
-            ProCard(padding: 0, radius: OpenClawProMetric.cardRadius) {
+            ProCard(
+                padding: 0,
+                radius: OpenClawProMetric.cardRadius,
+                usesGlassEffect: false,
+                castsShadow: false)
+            {
                 VStack(spacing: 0) {
-                    ForEach(Array(group.destinations.enumerated()), id: \.element.id) { index, destination in
+                    ForEach(group.destinations.indices, id: \.self) { index in
+                        let destination = group.destinations[index]
                         if index > 0 {
                             Divider().padding(.leading, 58)
                         }
@@ -178,7 +193,11 @@ struct RootTabsPhoneControlHub: View {
     }
 
     private var versionFooter: some View {
-        ProCard(radius: OpenClawProMetric.cardRadius) {
+        ProCard(
+            radius: OpenClawProMetric.cardRadius,
+            usesGlassEffect: false,
+            castsShadow: false)
+        {
             HStack {
                 Spacer()
                 Text("v\(DeviceInfoHelper.openClawVersionString())")

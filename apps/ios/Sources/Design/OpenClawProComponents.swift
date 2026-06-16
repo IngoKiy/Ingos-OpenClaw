@@ -57,6 +57,8 @@ struct ProCard<Content: View>: View {
     var isProminent: Bool = false
     var padding: CGFloat = 12
     var radius: CGFloat = OpenClawProMetric.cardRadius
+    var usesGlassEffect: Bool = true
+    var castsShadow: Bool = true
     @ViewBuilder var content: Content
 
     var body: some View {
@@ -66,7 +68,9 @@ struct ProCard<Content: View>: View {
             .proPanelSurface(
                 tint: self.tint,
                 radius: self.radius,
-                isProminent: self.isProminent)
+                isProminent: self.isProminent,
+                usesGlassEffect: self.usesGlassEffect,
+                castsShadow: self.castsShadow)
     }
 }
 
@@ -119,9 +123,10 @@ private struct ProPanelBackground: View {
 private struct ProLightGlassModifier: ViewModifier {
     @Environment(\.colorScheme) private var colorScheme
     let radius: CGFloat
+    let isEnabled: Bool
 
     func body(content: Content) -> some View {
-        if #available(iOS 26.0, *), self.colorScheme == .light {
+        if self.isEnabled, #available(iOS 26.0, *), self.colorScheme == .light {
             content.glassEffect(.regular, in: .rect(cornerRadius: self.radius))
         } else {
             content
@@ -161,12 +166,16 @@ extension View {
     func proPanelSurface(
         tint: Color? = nil,
         radius: CGFloat = OpenClawProMetric.cardRadius,
-        isProminent: Bool = false) -> some View
+        isProminent: Bool = false,
+        usesGlassEffect: Bool = true,
+        castsShadow: Bool = true) -> some View
     {
         self.modifier(ProPanelSurfaceModifier(
             tint: tint,
             radius: radius,
-            isProminent: isProminent))
+            isProminent: isProminent,
+            usesGlassEffect: usesGlassEffect,
+            castsShadow: castsShadow))
     }
 
     func proGlassSurface(
@@ -190,20 +199,31 @@ private struct ProPanelSurfaceModifier: ViewModifier {
     let tint: Color?
     let radius: CGFloat
     let isProminent: Bool
+    let usesGlassEffect: Bool
+    let castsShadow: Bool
 
     func body(content: Content) -> some View {
-        content
+        let surfaced = content
             .background {
                 ProPanelBackground(
                     radius: self.radius,
                     tint: self.tint,
                     isProminent: self.isProminent)
             }
-            .modifier(ProLightGlassModifier(radius: self.radius))
+
+        surfaced
+            .modifier(ProLightGlassModifier(
+                radius: self.radius,
+                isEnabled: self.usesGlassEffect))
             .shadow(
-                color: self.colorScheme == .dark ? .black.opacity(0.22) : .black.opacity(0.028),
-                radius: self.isProminent ? 9 : 4,
-                y: self.isProminent ? 4 : 1)
+                color: self.shadowColor,
+                radius: self.castsShadow ? (self.isProminent ? 9 : 4) : 0,
+                y: self.castsShadow ? (self.isProminent ? 4 : 1) : 0)
+    }
+
+    private var shadowColor: Color {
+        guard self.castsShadow else { return .clear }
+        return self.colorScheme == .dark ? .black.opacity(0.22) : .black.opacity(0.028)
     }
 }
 

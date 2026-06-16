@@ -125,6 +125,7 @@ const TIMEOUT_PARTIAL_DATA_GRACE_MS = 500;
 const HOOK_TIMEOUT_RECOVERY_GRACE_MS = TIMEOUT_PARTIAL_DATA_GRACE_MS + 1_000;
 const MAX_ACTIVE_MEMORY_SEARCH_QUERY_CHARS = 480;
 const TERMINAL_MEMORY_SEARCH_POLL_INTERVAL_MS = 25;
+const MEMORY_CORE_DREAMING_SESSION_KEY_PREFIX = "dreaming-narrative-";
 
 const NO_RECALL_VALUES = new Set([
   "",
@@ -1158,11 +1159,30 @@ function isEligibleInteractiveSession(ctx: {
   if (!ctx.sessionKey && !ctx.sessionId) {
     return false;
   }
+  if (isMemoryCoreDreamingSessionKey(ctx.sessionKey)) {
+    return false;
+  }
   const provider = (ctx.messageProvider ?? "").trim().toLowerCase();
   if (provider === "webchat") {
     return true;
   }
   return Boolean(ctx.channelId && ctx.channelId.trim());
+}
+
+function isMemoryCoreDreamingSessionKey(sessionKey: string | undefined): boolean {
+  const trimmed = sessionKey?.trim();
+  if (!trimmed) {
+    return false;
+  }
+  const { baseSessionKey } = parseThreadSessionSuffix(trimmed);
+  const key = baseSessionKey?.trim() || trimmed;
+  const firstSeparator = key.indexOf(":");
+  if (firstSeparator < 0) {
+    return key.startsWith(MEMORY_CORE_DREAMING_SESSION_KEY_PREFIX);
+  }
+  const secondSeparator = key.indexOf(":", firstSeparator + 1);
+  const sessionSegment = secondSeparator < 0 ? key : key.slice(secondSeparator + 1);
+  return sessionSegment.startsWith(MEMORY_CORE_DREAMING_SESSION_KEY_PREFIX);
 }
 
 function resolveChatType(ctx: {
@@ -3617,7 +3637,12 @@ export default definePluginEntry({
               });
               return undefined;
             }
-            if (!isEligibleInteractiveSession(ctx)) {
+            if (
+              !isEligibleInteractiveSession({
+                ...ctx,
+                sessionKey: resolvedSessionKey ?? ctx.sessionKey,
+              })
+            ) {
               await persistPluginStatusLines({
                 api,
                 agentId: effectiveAgentId,

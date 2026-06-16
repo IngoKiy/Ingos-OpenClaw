@@ -844,6 +844,26 @@ describe("active-memory plugin", () => {
     expect(runEmbeddedAgent).not.toHaveBeenCalled();
   });
 
+  it.each([
+    "dreaming-narrative-deep-123456789abc",
+    "dreaming-narrative-deep-123456789abc-retry-1",
+    "agent:main:dreaming-narrative-deep-123456789abc",
+    "agent:main:dreaming-narrative-deep-123456789abc:thread:retry-window",
+  ])("does not run for memory-core dreaming narrative session key %s", async (sessionKey) => {
+    const result = await hooks.before_prompt_build(
+      { prompt: "Write a dream diary entry from these memory fragments:", messages: [] },
+      {
+        agentId: "main",
+        trigger: "user",
+        sessionKey,
+        messageProvider: "webchat",
+      },
+    );
+
+    expect(result).toBeUndefined();
+    expect(runEmbeddedAgent).not.toHaveBeenCalled();
+  });
+
   it("defaults to direct-style sessions only", async () => {
     const result = await hooks.before_prompt_build(
       { prompt: "what wings should we order?", messages: [] },

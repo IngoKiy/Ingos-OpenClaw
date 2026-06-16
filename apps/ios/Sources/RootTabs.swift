@@ -403,6 +403,7 @@ struct RootTabs: View {
                 headerTitle: "Overview",
                 headerLeadingAction: self.sidebarHeaderLeadingAction,
                 showsHeaderMark: false,
+                embedsNavigationStack: false,
                 openChat: { self.selectSidebarDestination(.chat) },
                 openSettings: { self.selectSidebarDestination(.gateway) })
         case .activity:

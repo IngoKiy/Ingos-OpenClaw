@@ -201,6 +201,7 @@ struct RootTabsPhoneControlHub: View {
                 headerTitle: "Overview",
                 headerLeadingAction: self.phoneDetailBackAction,
                 showsHeaderMark: false,
+                embedsNavigationStack: false,
                 openChat: { self.openRootDestination(.chat) },
                 openSettings: { self.openRootDestination(.gateway) })
         case .activity:

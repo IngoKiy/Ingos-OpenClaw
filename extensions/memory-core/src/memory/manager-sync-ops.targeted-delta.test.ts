@@ -164,6 +164,16 @@ describe("session delta sync targeting", () => {
     expect(new Set(harness.syncCalls[0]?.sessionFiles)).toEqual(new Set([leftover, fresh]));
   });
 
+  it("forces leftover archive dirty files through a full enumeration", async () => {
+    const harness = new TargetedDeltaHarness();
+    harness.setLastReconcileAt(Date.now());
+    harness.addDirtyFile(archiveSessionFile("thread-leftover"));
+
+    await harness.runDeltaBatch([await writeLargeLiveSession("thread-fresh")]);
+
+    expect(harness.syncCalls).toEqual([{ reason: "session-delta" }]);
+  });
+
   it("forces archive events through a full enumeration inside the reconcile window", async () => {
     const harness = new TargetedDeltaHarness();
     harness.setLastReconcileAt(Date.now());

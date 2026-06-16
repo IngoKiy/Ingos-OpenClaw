@@ -1567,12 +1567,21 @@ export abstract class MemoryManagerSyncOps {
       // so pass it through and skip the sessions-dir enumeration (expensive on
       // networked filesystems). Archive/reset events force a full enumeration
       // because their old live transcript row must be pruned authoritatively.
+      const dirtySessionFiles = Array.from(this.sessionsDirtyFiles);
+      const dirtySetNeedsFullEnumeration = dirtySessionFiles.some((file) => {
+        const baseName = path.basename(file);
+        return (
+          isSessionArchiveArtifactName(baseName) &&
+          isUsageCountedSessionTranscriptFileName(baseName)
+        );
+      });
       const reconcileDue =
         needsFullSessionEnumeration ||
+        dirtySetNeedsFullEnumeration ||
         Date.now() - this.lastSessionPruneReconcileAt >= SESSION_PRUNE_RECONCILE_INTERVAL_MS;
       const syncParams = reconcileDue
         ? { reason: "session-delta" }
-        : { reason: "session-delta", sessionFiles: Array.from(this.sessionsDirtyFiles) };
+        : { reason: "session-delta", sessionFiles: dirtySessionFiles };
       void this.sync(syncParams).catch((err: unknown) => {
         log.warn(`memory sync failed (session-delta): ${String(err)}`);
       });

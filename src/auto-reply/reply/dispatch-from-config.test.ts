@@ -886,6 +886,7 @@ async function dispatchTwiceWithFreshDispatchers(params: Omit<DispatchReplyArgs,
 
 describe("dispatchReplyFromConfig", () => {
   beforeEach(() => {
+    vi.useRealTimers();
     clearAgentHarnesses();
     clearPluginCommands();
     const discordTestPlugin = {

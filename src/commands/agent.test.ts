@@ -1312,6 +1312,9 @@ describe("agentCommand", () => {
         },
       });
       mockConfig(home, store);
+      vi.mocked(attemptExecutionRuntime.runAgentAttempt).mockResolvedValueOnce(
+        createDefaultAgentResult(),
+      );
 
       await agentCommand(
         { message: "hi", to: sessionKey, deliver: true, channel: "telegram" },

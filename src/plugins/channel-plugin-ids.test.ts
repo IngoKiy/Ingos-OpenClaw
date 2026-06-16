@@ -1364,13 +1364,15 @@ describe("resolveGatewayStartupPluginIds", () => {
 
   it("matches explicitly disabled channel ids case-insensitively", () => {
     const registry = createManifestRegistryFixture();
+    const plugins = registry.plugins.map((plugin) => {
+      if (plugin.id !== "external-env-channel-plugin") {
+        return plugin;
+      }
+      return Object.assign({}, plugin, { channels: ["External-Env-Channel"] });
+    });
     useManifestRegistryFixture({
       ...registry,
-      plugins: registry.plugins.map((plugin) =>
-        plugin.id === "external-env-channel-plugin"
-          ? { ...plugin, channels: ["External-Env-Channel"] }
-          : plugin,
-      ),
+      plugins,
     });
 
     expectStartupPluginIdsCase({

@@ -762,6 +762,7 @@ export const registerTelegramHandlers = ({
     if (storedOverride) {
       return {
         agentId: route.agentId,
+        hasSessionModelOverride: true,
         sessionEntry: entry,
         sessionKey,
         model: storedOverride.provider
@@ -774,6 +775,7 @@ export const registerTelegramHandlers = ({
     if (provider && model) {
       return {
         agentId: route.agentId,
+        hasSessionModelOverride: true,
         sessionEntry: entry,
         sessionKey,
         model: `${provider}/${model}`,
@@ -782,6 +784,7 @@ export const registerTelegramHandlers = ({
     const modelCfg = runtimeCfg.agents?.defaults?.model;
     return {
       agentId: route.agentId,
+      hasSessionModelOverride: false,
       sessionEntry: entry,
       sessionKey,
       model: typeof modelCfg === "string" ? modelCfg : modelCfg?.primary,
@@ -2782,8 +2785,9 @@ export const registerTelegramHandlers = ({
 
           // Resolve current model from session (prefer overrides)
           const currentModel =
-            sessionState.model ??
-            `${modelData.resolvedDefault.provider}/${modelData.resolvedDefault.model}`;
+            sessionState.hasSessionModelOverride && sessionState.model
+              ? sessionState.model
+              : `${modelData.resolvedDefault.provider}/${modelData.resolvedDefault.model}`;
 
           const buttons = buildModelsKeyboard({
             provider,

@@ -1,4 +1,5 @@
 // Database-first legacy-store guard tests cover runtime state-file regressions.
+import { execFileSync } from "node:child_process";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -6,6 +7,7 @@ import { describe, expect, it } from "vitest";
 import {
   collectDatabaseFirstLegacyStoreSourceFiles,
   collectDatabaseFirstLegacyStoreViolations,
+  filterGitIgnoredSourceFiles,
 } from "../../scripts/check-database-first-legacy-stores.mjs";
 
 describe("check-database-first-legacy-stores", () => {
@@ -27,6 +29,27 @@ describe("check-database-first-legacy-stores", () => {
         .toSorted();
 
       expect(relativeFiles).toEqual(["src/runtime.js", "src/types.ts", "src/worker.mjs"]);
+    } finally {
+      await fs.rm(root, { force: true, recursive: true });
+    }
+  });
+
+  it("filters Git ignored generated runtime files", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-db-first-guard-"));
+    try {
+      execFileSync("git", ["init"], { cwd: root, stdio: "ignore" });
+      await fs.mkdir(path.join(root, "src", "generated"), { recursive: true });
+      await fs.writeFile(path.join(root, ".gitignore"), "src/generated/\n");
+      await fs.writeFile(path.join(root, "src", "runtime.js"), "export {};\n");
+      await fs.writeFile(path.join(root, "src", "generated", "viewer-runtime.js"), "export {};\n");
+
+      const files = await collectDatabaseFirstLegacyStoreSourceFiles([path.join(root, "src")]);
+      const filteredFiles = filterGitIgnoredSourceFiles(files, root);
+      const relativeFiles = filteredFiles
+        .map((file) => path.relative(root, file).replaceAll(path.sep, "/"))
+        .toSorted();
+
+      expect(relativeFiles).toEqual(["src/runtime.js"]);
     } finally {
       await fs.rm(root, { force: true, recursive: true });
     }

@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 // Guards database-first state ownership by blocking legacy store writes in runtime code.
+import { spawnSync } from "node:child_process";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import ts from "typescript";
@@ -258,6 +259,40 @@ async function collectSourceFiles(targetPath) {
 
 export async function collectDatabaseFirstLegacyStoreSourceFiles(sourceRoots) {
   return (await Promise.all(sourceRoots.map((root) => collectSourceFiles(root)))).flat();
+}
+
+function relativeGitPath(repoRoot, filePath) {
+  const relativePath = path.relative(repoRoot, filePath).replaceAll(path.sep, "/");
+  return relativePath && !relativePath.startsWith("../") && relativePath !== ".."
+    ? relativePath
+    : null;
+}
+
+export function filterGitIgnoredSourceFiles(files, repoRoot) {
+  const relativePaths = files
+    .map((filePath) => relativeGitPath(repoRoot, filePath))
+    .filter((relativePath) => relativePath !== null);
+  if (relativePaths.length === 0) {
+    return files;
+  }
+
+  const result = spawnSync("git", ["check-ignore", "--stdin", "-z"], {
+    cwd: repoRoot,
+    input: `${relativePaths.join("\0")}\0`,
+    maxBuffer: 16 * 1024 * 1024,
+  });
+  if (result.error || (result.status !== 0 && result.status !== 1)) {
+    return files;
+  }
+
+  const ignoredPaths = new Set(result.stdout.toString("utf8").split("\0").filter(Boolean));
+  if (ignoredPaths.size === 0) {
+    return files;
+  }
+  return files.filter((filePath) => {
+    const relativePath = relativeGitPath(repoRoot, filePath);
+    return relativePath === null || !ignoredPaths.has(relativePath);
+  });
 }
 
 function importSource(node) {
@@ -9746,7 +9781,10 @@ export function collectDatabaseFirstLegacyStoreViolations(
 export async function main() {
   const repoRoot = resolveRepoRoot(import.meta.url);
   const sourceRoots = databaseFirstLegacyStoreSourceRoots.map((root) => path.join(repoRoot, root));
-  const files = await collectDatabaseFirstLegacyStoreSourceFiles(sourceRoots);
+  const files = filterGitIgnoredSourceFiles(
+    await collectDatabaseFirstLegacyStoreSourceFiles(sourceRoots),
+    repoRoot,
+  );
   const violations = [];
   const currentLegacyWriteAllowances = currentLegacyWriteViolationAllowances();
 

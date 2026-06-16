@@ -7,6 +7,7 @@ import "./agent-command.test-mocks.js";
 import { testing as acpManagerTesting } from "../acp/control-plane/manager.js";
 import * as authProfileStoreModule from "../agents/auth-profiles/store.js";
 import * as attemptExecutionRuntime from "../agents/command/attempt-execution.runtime.js";
+import type { AgentCommandDeliveryResult } from "../agents/command/delivery.js";
 import { deliverAgentCommandResult } from "../agents/command/delivery.runtime.js";
 import { runEmbeddedAgent } from "../agents/embedded-agent.js";
 import { loadManifestModelCatalog, loadModelCatalog } from "../agents/model-catalog.js";
@@ -1312,7 +1313,14 @@ describe("agentCommand", () => {
       });
       mockConfig(home, store);
       const sendMessageTelegram = vi.fn(async () => undefined);
-      vi.mocked(deliverAgentCommandResult).mockResolvedValueOnce(createDefaultAgentResult());
+      const deliveryResult: AgentCommandDeliveryResult = {
+        payloads: [{ text: "ok", mediaUrl: null }],
+        meta: {
+          durationMs: 5,
+          agentMeta: { sessionId: "s", provider: "p", model: "m" },
+        },
+      };
+      vi.mocked(deliverAgentCommandResult).mockResolvedValueOnce(deliveryResult);
 
       await agentCommand(
         { message: "hi", to: sessionKey, deliver: true, channel: "telegram" },

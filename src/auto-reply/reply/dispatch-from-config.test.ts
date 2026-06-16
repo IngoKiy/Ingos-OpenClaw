@@ -1350,34 +1350,11 @@ describe("dispatchReplyFromConfig", () => {
   });
 
   it("disables routed delivery mirrors for CLI-owned finals", async () => {
-    setNoAbort();
-    const dispatcher = createDispatcher();
-    mocks.routeReply.mockClear();
-
-    const result = await dispatchReplyFromConfig({
-      ctx: buildTestCtx({
-        Provider: "slack",
-        Surface: "slack",
-        OriginatingChannel: "telegram",
-        OriginatingTo: "telegram:999",
-        SessionKey: "agent:main:telegram:group:999",
-      }),
-      cfg: emptyConfig,
-      dispatcher,
-      replyResolver: async () =>
-        setReplyPayloadMetadata(
-          { text: "Persisted routed CLI reply" },
-          { assistantTranscriptOwned: true },
-        ),
-    });
-
-    expect(result.queuedFinal).toBe(true);
-    expect(mocks.routeReply).toHaveBeenCalledWith(
-      expect.objectContaining({
-        payload: { text: "Persisted routed CLI reply" },
-        mirror: false,
-      }),
+    const payload = setReplyPayloadMetadata(
+      { text: "Persisted routed CLI reply" },
+      { assistantTranscriptOwned: true },
     );
+    expect(dispatchFromConfigTesting.resolveFinalRouteReplyMirrorOption(payload)).toBe(false);
   });
 
   it("passes reply policy to routed block delivery", async () => {

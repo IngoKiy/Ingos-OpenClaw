@@ -209,6 +209,13 @@ Options:
   --cpu-core-warn <ratio>        Hot CPU threshold (default: 0.9)
   --hot-wall-warn-ms <ms>        Minimum wall time for hot CPU observations (default: 30000)
   --max-rss-warn-mb <mb>         Maximum RSS warning threshold (default: 1536)
+  --wall-anomaly-multiplier <n>  Wall-time anomaly multiplier (default: 3)
+  --rss-anomaly-multiplier <n>   RSS anomaly multiplier (default: 2.5)
+  --qa-cpu-regression-multiplier <n>  QA baseline CPU regression multiplier (default: 2)
+  --qa-wall-regression-multiplier <n> QA baseline wall regression multiplier (default: 2)
+  --command-timeout-ms <ms>      Lifecycle/slash command timeout (default: 120000)
+  --build-timeout-ms <ms>        Prebuild command timeout (default: 600000)
+  --qa-timeout-ms <ms>           QA chunk timeout (default: 900000)
   --skip-prebuild                Skip the upfront build used to avoid per-command rebuild noise
   --skip-lifecycle              Skip plugin install/inspect/disable/enable/doctor/uninstall
   --skip-qa                     Skip QA Lab RPC conversation runs
@@ -216,6 +223,14 @@ Options:
   --allow-empty                 Allow zero-command runs when every active phase is skipped
   --fail-on-observation         Treat RSS/CPU/wall observation rows as guard failures
   --keep-run-root               Preserve isolated HOME/state/log temp root after success
+
+Environment:
+  OPENCLAW_PLUGIN_GATEWAY_GAUNTLET_IDS   Comma-separated plugin ids to include
+  OPENCLAW_PLUGIN_GATEWAY_GAUNTLET_TOTAL Total plugin shards
+  OPENCLAW_PLUGIN_GATEWAY_GAUNTLET_INDEX Zero-based shard index
+  OPENCLAW_PLUGIN_GATEWAY_GAUNTLET_FAIL_ON_OBSERVATION=1
+  OPENCLAW_PLUGIN_GATEWAY_GAUNTLET_KEEP_RUN_ROOT=1
+  OPENCLAW_PLUGIN_GATEWAY_GAUNTLET_QA_SUMMARY_MAX_BYTES  QA summary read ceiling
 `);
 }
 
@@ -272,6 +287,29 @@ function openclawCommand(repoRoot, args) {
     command: process.execPath,
     args: [path.join(repoRoot, "dist", "entry.js"), ...args],
   };
+}
+
+function builtEntryPath(repoRoot) {
+  return path.join(repoRoot, "dist", "entry.js");
+}
+
+function selectSlashHelpAliases(plugin, includePluginOwnedCliAliases) {
+  return includePluginOwnedCliAliases
+    ? plugin.cliCommandAliases
+    : plugin.cliCommandAliases.filter((entry) => !isPluginOwnedCliAlias(entry));
+}
+
+function requiresBuiltEntry(options, selectedPlugins) {
+  if (selectedPlugins.length === 0) {
+    return false;
+  }
+  if (!options.skipLifecycle) {
+    return true;
+  }
+  if (options.skipSlashHelp) {
+    return false;
+  }
+  return selectedPlugins.some((plugin) => selectSlashHelpAliases(plugin, true).length > 0);
 }
 
 function sourceOpenclawCommand(repoRoot, args) {
@@ -758,9 +796,7 @@ async function runPluginLifecycle(params) {
 
 async function runSlashHelpProbes(params) {
   for (const plugin of params.plugins) {
-    const aliases = params.includePluginOwnedCliAliases
-      ? plugin.cliCommandAliases
-      : plugin.cliCommandAliases.filter((entry) => !isPluginOwnedCliAlias(entry));
+    const aliases = selectSlashHelpAliases(plugin, params.includePluginOwnedCliAliases);
     for (const alias of aliases) {
       process.stderr.write(`[plugin-gauntlet] ${plugin.id} slash-help /${alias.name}\n`);
       params.rows.push(
@@ -883,7 +919,13 @@ async function main() {
     const prebuildFailed = rows.some(
       (row) => row.phase === "prebuild" && (row.status !== 0 || row.timedOut),
     );
-    if (!prebuildFailed && !options.skipLifecycle) {
+    const entryPath = builtEntryPath(repoRoot);
+    const missingSkippedPrebuildEntry =
+      selectedPlugins.length > 0 &&
+      options.skipPrebuild &&
+      requiresBuiltEntry(options, selectedPlugins) &&
+      !fs.existsSync(entryPath);
+    if (!prebuildFailed && !missingSkippedPrebuildEntry && !options.skipLifecycle) {
       await runPluginLifecycle({
         repoRoot,
         outputDir: options.outputDir,
@@ -895,7 +937,7 @@ async function main() {
         skipSlashHelp: options.skipSlashHelp,
       });
     }
-    if (!prebuildFailed && !options.skipSlashHelp) {
+    if (!prebuildFailed && !missingSkippedPrebuildEntry && !options.skipSlashHelp) {
       await runSlashHelpProbes({
         repoRoot,
         outputDir: options.outputDir,
@@ -944,16 +986,22 @@ async function main() {
       (row) => row.status !== 0 || row.timedOut || row.diagnosticFailure,
     );
     const observations = [...metricObservations, ...qaBaselineObservations, ...gatewayObservations];
-    const guardFailures =
-      !hasGauntletWorkRows(rows) && !options.allowEmpty
-        ? [
-            {
-              kind: "empty-run",
-              message:
-                "No lifecycle, slash-help, or QA gauntlet commands ran; remove a skip flag or pass --allow-empty for intentional dry runs.",
-            },
-          ]
-        : [];
+    const guardFailures = [];
+    if (missingSkippedPrebuildEntry) {
+      guardFailures.push({
+        kind: "missing-built-entry",
+        message:
+          `${path.relative(repoRoot, entryPath)} is missing; ` +
+          "run without --skip-prebuild or build the gauntlet runtime first.",
+      });
+    }
+    if (!hasGauntletWorkRows(rows) && !options.allowEmpty && guardFailures.length === 0) {
+      guardFailures.push({
+        kind: "empty-run",
+        message:
+          "No lifecycle, slash-help, or QA gauntlet commands ran; remove a skip flag or pass --allow-empty for intentional dry runs.",
+      });
+    }
     guardFailures.push(...buildObservationGuardFailures(observations, options.failOnObservation));
     const hasFailures = failures.length > 0 || guardFailures.length > 0;
     preserveRunRoot = preserveRunRoot || hasFailures;
